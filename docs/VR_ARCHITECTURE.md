@@ -32,7 +32,9 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Recentre from the runtime (`XrEventDataReferenceSpaceChangePending`) | Built, **not yet run on the device.** |
 | 72 Hz automatic fallback | In the host since the refresh request was added; **not yet seen to fire worn.** |
 | Comfort options, foveation | Not started. |
-| Cross-port standard (v0.1) items not done here: `turn_mode` and `snap_angle` (still `snap_turn`), vignette, seated mode and `height_offset`, `camera_shake`, the standard's settings tabs, a `dominant_hand` setting, `hud_scale` and `hud_visible`, depth layer submission | Not started. |
+| sfvr (the cross-port library, vendored): View timing, turning, the haptic queue, the `[vr-perf]` line, settings ranges | Built; sfvr's own tests pass in its repo and the config code was exercised on a computer, **not yet run on the device.** |
+| `vr.turn_mode` / `vr.snap_angle` (settings version 2, `vr.snap_turn` migrated); `vr.hud_mode` and QUIT on the VR settings' second page; Index pause on a trackpad press | Built, **not yet run on the device.** |
+| Cross-port standard (v0.1) items not done here: vignette, seated mode and `height_offset`, `camera_shake`, the standard's settings tabs, a `dominant_hand` setting, `hud_scale` and `hud_visible`, depth layer submission | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
 
@@ -153,8 +155,9 @@ directly.
   head between the eyes. The fog's screen layers are left out of the eyes.
 - **Head aim.** `vr_player_control_facing` (in `player_control.c`) sets the player's facing to
   the head's direction turned by the heading.
-  - The right stick turns the heading, not the game: `vr.snap_turn` (30°) or
-    `vr.smooth_turn_speed`.
+  - The right stick turns the heading, not the game (`sfvr_turn_update`): `vr.turn_mode`
+    "snap" (a flick of `vr.snap_angle`, 30° by default; 15, 30, 45, 60 or 90), "smooth"
+    (`vr.smooth_turn_speed`, 120°/s by default, with a 0.2 dead zone) or "off".
   - When the game turns the player itself, the heading follows.
   - View magnetism is off while the head aims.
 
@@ -215,12 +218,22 @@ upper face button) and Menu:
   recentre with height, applied once the runtime has moved the space.
 - The both-sticks recentre of earlier versions is gone: it also pressed crouch and melee.
 
+**sfvr** (`port/third_party/sfvr`) is the cross-port C library for the parts every port does
+the same: the View button's timing (`sfvr_view`), turning (`sfvr_turn`), the haptic vocabulary and
+per-frame queue (`sfvr_haptics`), the `[vr-perf]` formatter (`sfvr_perf`) and the settings key
+registry (`sfvr_settings`). It is a copy of `~/code/sfvr` (its commit is in `VERSION`) and is never
+edited here: change it there, re-copy it, and update `VERSION`. The guest build compiles its
+sources (`tools/android_build.py`). Room-scale stays Halo's own (`vr_room_step`), which is what
+`sfvr_room` was derived from.
+
 **Touch and Index** (fallback profiles, used only where the Frame's is not): they have no
 bumpers, so a grip held with a stick click stands for the hand's bumper (grenade for the weapon
 hand's, flashlight for the other's); the stick click alone still melees and crouches. The left
 upper face button is View, and the left lower one switches grenades. The host knows each hand's
-controller from the interaction profile changed event. **Index's Menu is bound to its system
-button, which the runtime keeps; Index has no way to pause until that is changed.**
+controller from the interaction profile changed event. Index's Menu (pause) is a firm
+press of either trackpad (`trackpad/force`, a float on a boolean action, which reads as
+pressed past the runtime's threshold), as its system button belongs to the runtime. That
+binding's threshold and feel have not been tried.
 
 **Gestures** (`update_gestures`, either layout; injected in `handle_one_player_input`):
 
@@ -238,19 +251,22 @@ mirrored (`halo_vr_mirror_winding` flips the triangles' winding).
 
 **Weapon feel.** When zoomed, the aim is eased toward the hand's (`steady_aim`, after
 HaloCEVR's half-life formula), steadying the scope. Shots buzz the weapon hand by weapon (and the
-off hand when two-handed), scaled by `vr.haptics`.
+off hand when two-handed), scaled by `vr.haptics`. Buzzes are queued as they are asked for (`vr_haptic`) and played once a frame
+by `vr_present` (`sfvr_haptic_flush`), the strongest of those overlapping a hand's; the View recentre's is
+the standard's system buzz, 0.6 for 80 ms in both hands.
 
 **VR settings in the pause menu** (`port/linux/game/vr_menu.c`). Halo's menus are widget
 tags in each map, so when a level's tags load the VR build adds its own, cloned from the solo
 pause menu's: same font, colours, buttons and boxes.
 - **The pause menu** gets a fifth item, VR SETTINGS. Its button hints (B back, A select) move
   from under the list to under the mission objectives, making room.
-- **VR SETTINGS** is the pause menu's backdrop and boxes with nine settings and an item to
-  quit, in two columns of five: controls (VR / Xbox), aim (hand / head), gun hand, turning
-  (snap 30 / snap 45 / smooth), room-scale, scope, vehicles (inside / chase), steering
-  (stick / head / hand), cutscenes (3D / flat). Not in it yet: `vr.hud_mode` (config or
-  `deploy.sh --config vr.hud_mode=near`).
-- **QUIT TO STEAM** (the last item) is not a setting. A asks ("SURE? A TO QUIT"); A again within
+- **VR SETTINGS** is the pause menu's backdrop and boxes with two columns of five items a page.
+  Page 1: controls (VR / Xbox), aim (hand / head), gun hand, turning (snap 30 / snap 45 /
+  smooth / off), room-scale, scope, vehicles (inside / chase), steering (stick / head /
+  hand), cutscenes (3D / flat) and MORE..., which opens page 2: HUD (far / near / leash) and
+  QUIT TO STEAM. B goes back a page. `vr_menu_page` builds each page from the items marked
+  with it.
+- **QUIT TO STEAM** (the last item, on page 2) is not a setting. A asks ("SURE? A TO QUIT"); A again within
   five seconds calls `vr_request_exit`, which has the host call `xrRequestExitSession`. The
   frame loop already follows the session's STOPPING (the host ends it) and EXITING states to the
   exit in `frame_begin`, and `vr_request_exit` exits after three seconds regardless if they never
@@ -306,8 +322,15 @@ along it as walking does. Then that place to stand moves to the head.
   on foot, hand or head, yaws).
 - `vr.diag_zoom_seconds` zooms in that long into play, switching first to a weapon that zooms.
   `vr.diag_two_handed` holds the synthetic left hand on the gun.
-- `vr.timing` logs where a frame's time goes (`[vr-frame]`); `vr.timing_gpu` waits for the GPU
-  to time it separately.
+- The game logs the standard `[vr-perf]` line every 10 s (`sfvr_perf`, in `vr_present`), for
+  example `[vr-perf] fps=71.9 missed=3 cpu=7.31ms game=1.20 render=5.02 copy=0.80 end=0.29
+  eye=2.21/2.19ms gpu=n/a`. Its stages are `game` (the game's own work), `render` (the draw
+  calls of the passes: eyes, scope, HUD), `copy` (the copies into the images) and `end`
+  (ending the frame); the waits for the runtime are not CPU time. `eye` is each eye's pass,
+  `missed` counts frames whose display time came more than a half period late, and `gpu`
+  is the wait for the GPU, which only `vr.timing_gpu` (waiting each frame, slowing it) makes.
+  `vr.timing` makes the window 2 s. The host's own statistics line (which drives the 72 Hz
+  fallback) is an `[openxr]` line.
 - `debug.telnet_console` opens a script console on 127.0.0.1:2323. Reach it with
   `adb forward tcp:2323 tcp:2323`. Useful commands: `map_name levels\a30\a30` loads a level,
   and `cinematic_skip_start_internal` / `cinematic_skip_stop_internal` skip its intro.
@@ -322,16 +345,23 @@ along it as walking does. Then that place to stand moves to the head.
 ("ik" / "hidden" / "animated"),
 `screen_distance`, `screen_width`, `hud_mode` ("far"/"near"/"leash"), `hud_distance` and `hud_width`
 (0: the mode's own), `aim` ("head"/"hand"),
-`weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`, `vehicle_view`,
+`weapon_offset_right`/`_up`/`_back`, `turn_mode` ("snap"/"smooth"/"off"), `snap_angle` (30),
+`smooth_turn_speed`, `vehicle_view`,
 `vehicle_steering`, `controls` ("vr"/"pad"), `move_relative` ("head"/"left"/"right"),
 `two_handed`, `left_handed`, `melee_speed`, `flashlight_distance`, `crouch_height`, `holsters`,
-`haptics`, `scope`, `scope_size` (0.06 m), `roomscale` (false), `settings_version` (1).
+`haptics`, `scope`, `scope_size` (0.06 m), `roomscale` (false), `settings_version` (2).
 
 **Settings file hygiene.**
-- `vr.settings_version` is written to `config.toml`. A VR file without it (from before) is
-  migrated on load: `hud_distance` and `hud_width` at their old written defaults, 15 and 10,
-  become 0 (the HUD mode's own) in the file, so they do not override `near` or `leash`. A
-  value that is not the old default is kept.
+- `vr.settings_version` (now 2) is written to `config.toml`, and an older VR file is migrated
+  on load, in place (the player's other lines and comments stay), and read again:
+  - 0 to 1: `hud_distance` and `hud_width` at their old written defaults, 15 and 10, become 0
+    (the HUD mode's own), so they do not override `near` or `leash`. A value that is not the
+    old default is kept.
+  - 1 to 2: `snap_turn` (degrees of a snap turn, 0 for smooth) becomes `turn_mode` ("smooth" if
+    it was 0, else "snap") and `snap_angle` (the nearest of 15, 30, 45, 60, 90); the old line
+    is commented out. `vr.snap_turn` stays as a read-only legacy key (never written or added
+    to a file), and `HALO_VR_SNAP_TURN` still works for a run when `HALO_VR_TURN_MODE` and
+    `HALO_VR_SNAP_ANGLE` are unset.
 - Every numeric `vr.*` value is clamped on load (the file and the environment) to the ranges
   below, with a log line: `settings: vr.haptics is 7, outside 0 to 1; using 1`. The file keeps
   what the player wrote. Defaults are unchanged. A range with "or 0" also allows 0.
@@ -339,20 +369,20 @@ along it as walking does. Then that place to stand moves to the head.
   | Setting | Range |
   | --- | --- |
   | `resolution_scale` | 0.75 to 1.5 |
-  | `refresh_rate` | 60 to 144, or 0 |
-  | `snap_turn` | 15 to 90, or 0 (smooth) |
+  | `refresh_rate` | 72 to 144, or 0 |
+  | `snap_angle` | 15 to 90 |
   | `smooth_turn_speed` | 30 to 360 |
   | `haptics` | 0 to 1 |
-  | `hud_distance`, `hud_width` | 0.8 to 30, 0.3 to 30, or 0 (the mode's own) |
+  | `hud_distance`, `hud_width` | 0.8 to 20, 0.3 to 30, or 0 (the mode's own) |
   | `screen_distance`, `screen_width` | 0.8 to 5, 0.5 to 6 |
   | `cinema_separation`, `_convergence`, `_distance`, `_width` | 0 to 0.1, 0.5 to 20, 1 to 10, 0.5 to 12 |
   | `world_scale` | 0.1 to 1 |
   | `melee_speed`, `flashlight_distance`, `crouch_height`, `scope_size` | 0 to 10, 0 to 0.5, 0 to 0.6, 0 to 0.3 |
   | `weapon_offset_*` | -0.5 to 0.5 |
-  | diagnostics (`diag_*`, `dump_*`, `probe_seconds`) | wide, for sanity only |
+  | diagnostics (`diag_*`, `dump_*`, `probe_seconds`) | wide, for sanity only (`probe_seconds` 0 to 60, `diag_walk_speed` 0 to 5) |
 
-  The ranges of `resolution_scale`, `snap_turn`, `smooth_turn_speed` and `haptics` are the
-  cross-port standard's; the rest are limits chosen here.
+  Where sfvr's key registry (`port/third_party/sfvr`, the cross-port standard) has the key, its
+  range is the one used (`config_clamp_ranges` looks it up); the rest are limits chosen here.
 - `HALO_VR_<KEY>` in the environment overrides a key for one run (the standard's override
   form; a few keys are named otherwise, `HALO_VR_WEAPON_RIGHT` for example).
 
