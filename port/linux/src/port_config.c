@@ -299,6 +299,9 @@ static const struct config_setting config_settings[] =
 		"shoulders to the hands (the left to the left controller, or to the gun\n"
 		"when held near it); \"hidden\" shows the gun alone; \"animated\" moves\n"
 		"them with the gun as the game animates them." },
+	{ "vr.two_handed", _config_boolean, "true", "HALO_VR_TWO_HANDED", _environment_value, _platform_vr,
+		"With vr.aim \"hand\": the left hand held on the gun, ahead of the right,\n"
+		"steadies it: the gun points from the right hand to the left." },
 	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": how far right of the game's eye the weapon's model\n"
 		"holds its grip, in metres, so the grip sits in the hand." },
@@ -319,6 +322,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_hand_yaw", _config_real, "0.0", "HALO_VR_DIAG_HAND_YAW", _environment_value, _platform_vr,
 		"With vr.force_render: turn the right hand left of the head by this many\n"
 		"degrees." },
+	{ "vr.diag_two_handed", _config_boolean, "false", "HALO_VR_DIAG_TWO_HANDED", _environment_value, _platform_vr,
+		"With vr.force_render: hold the left hand on the gun, ahead and a little\n"
+		"left of the right." },
 	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
 		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
 		"and vr-hud.bmp in the data folder; 0 none." },

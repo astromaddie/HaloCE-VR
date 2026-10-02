@@ -65,11 +65,16 @@ static struct
 	float head_yaw, aim_yaw;
 	/* the weapon's place relative to the right hand (vr.weapon_offset_*) */
 	float weapon_offset[3];
+	/* the aim this frame: the right controller's, or with both hands on
+	the gun the line from the right to the left (vr.two_handed) */
+	struct halo_xr_pose aim_pose;
+	int two_handed_enabled, two_handed;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
 	float reticle_distance;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw, diag_hand_yaw;
+	int diag_two_handed;
 	long dump_frame, dump_cinema_frame;
 	long stereo_frames, cinema_frames;
 	/* timing (vr.timing): milliseconds summed over `timed` frames */
@@ -136,6 +141,7 @@ void vr_initialize(void)
 	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
 	vr.snap_armed = 1;
 	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
+	vr.two_handed_enabled = config_boolean("vr.two_handed");
 	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
 	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
 	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
@@ -144,6 +150,7 @@ void vr_initialize(void)
 	vr.gpu_finish = config_boolean("vr.timing_gpu");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
+	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
 	vr.dump_frame = config_integer("vr.dump_frame");
 	vr.dump_cinema_frame = config_integer("vr.dump_cinema_frame");
 	if (vr.units_per_metre <= 0.0f)
@@ -357,6 +364,16 @@ static void synthesize_views(void)
 			memcpy(vr.frame.aim[hand].orientation, hand ? turned : yaw, sizeof(yaw));
 			vr.frame.hand_valid[hand] = 3;
 		}
+		if (vr.diag_two_handed)
+		{
+			/* the left hand on the gun: 30 cm ahead of the right, 10 cm left */
+			float ahead[3] = { -0.10f, 0.0f, -0.30f }, turned_ahead[3];
+
+			rotate(turned, ahead, turned_ahead);
+			vr.frame.grip[0].position[0] = vr.frame.grip[1].position[0] + turned_ahead[0];
+			vr.frame.grip[0].position[1] = vr.frame.grip[1].position[1] + turned_ahead[1];
+			vr.frame.grip[0].position[2] = vr.frame.grip[1].position[2] + turned_ahead[2];
+		}
 	}
 	vr.frame.flags |= HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
 }
@@ -531,6 +548,97 @@ static void turn(void)
 	}
 }
 
+/* a unit quaternion whose -z is `forward` and whose +y is as near `up`
+as that allows */
+static void look_rotation(const float forward[3], const float up[3], float out[4])
+{
+	float z[3] = { -forward[0], -forward[1], -forward[2] }, x[3], y[3], length, trace;
+
+	x[0] = up[1] * z[2] - up[2] * z[1];
+	x[1] = up[2] * z[0] - up[0] * z[2];
+	x[2] = up[0] * z[1] - up[1] * z[0];
+	length = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+	if (length < 1e-5f)
+	{
+		out[0] = out[1] = out[2] = 0.0f;
+		out[3] = 1.0f;
+		return;
+	}
+	x[0] /= length; x[1] /= length; x[2] /= length;
+	y[0] = z[1] * x[2] - z[2] * x[1];
+	y[1] = z[2] * x[0] - z[0] * x[2];
+	y[2] = z[0] * x[1] - z[1] * x[0];
+	/* the columns x, y, z as a quaternion */
+	trace = x[0] + y[1] + z[2];
+	if (trace > 0.0f)
+	{
+		float r = sqrtf(1.0f + trace) * 2.0f;
+
+		out[3] = 0.25f * r;
+		out[0] = (y[2] - z[1]) / r;
+		out[1] = (z[0] - x[2]) / r;
+		out[2] = (x[1] - y[0]) / r;
+	}
+	else if (x[0] > y[1] && x[0] > z[2])
+	{
+		float r = sqrtf(1.0f + x[0] - y[1] - z[2]) * 2.0f;
+
+		out[3] = (y[2] - z[1]) / r;
+		out[0] = 0.25f * r;
+		out[1] = (y[0] + x[1]) / r;
+		out[2] = (z[0] + x[2]) / r;
+	}
+	else if (y[1] > z[2])
+	{
+		float r = sqrtf(1.0f + y[1] - x[0] - z[2]) * 2.0f;
+
+		out[3] = (z[0] - x[2]) / r;
+		out[0] = (y[0] + x[1]) / r;
+		out[1] = 0.25f * r;
+		out[2] = (z[1] + y[2]) / r;
+	}
+	else
+	{
+		float r = sqrtf(1.0f + z[2] - x[0] - y[1]) * 2.0f;
+
+		out[3] = (x[1] - y[0]) / r;
+		out[0] = (z[0] + x[2]) / r;
+		out[1] = (z[1] + y[2]) / r;
+		out[2] = 0.25f * r;
+	}
+}
+
+/* the aim this frame: the right controller's, unless the left hand holds
+the gun ahead of it (between 12 and 60 cm along the right hand's aim and
+within 35 degrees of it), when the gun points from the right hand to the
+left, as a rifle held in both does */
+static void update_aim_pose(void)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
+	float aim[3], between[3], length, up[3];
+
+	vr.aim_pose = vr.frame.aim[1];
+	vr.two_handed = 0;
+	if (!vr.two_handed_enabled || (vr.frame.hand_valid[1] & 3) != 3 || !(vr.frame.hand_valid[0] & 1))
+		return;
+	rotate(vr.frame.aim[1].orientation, xr_forward, aim);
+	between[0] = vr.frame.grip[0].position[0] - vr.frame.grip[1].position[0];
+	between[1] = vr.frame.grip[0].position[1] - vr.frame.grip[1].position[1];
+	between[2] = vr.frame.grip[0].position[2] - vr.frame.grip[1].position[2];
+	length = sqrtf(between[0] * between[0] + between[1] * between[1] + between[2] * between[2]);
+	if (length < 0.12f || length > 0.60f ||
+		(between[0] * aim[0] + between[1] * aim[1] + between[2] * aim[2]) / length < 0.82f)
+	{
+		return;
+	}
+	between[0] /= length;
+	between[1] /= length;
+	between[2] /= length;
+	rotate(vr.frame.aim[1].orientation, xr_up, up);
+	look_rotation(between, up, vr.aim_pose.orientation);
+	vr.two_handed = 1;
+}
+
 /* the right hand's aim in Halo's axes at heading 0; 0 untracked */
 static int hand_forward(float out[3])
 {
@@ -539,7 +647,7 @@ static int hand_forward(float out[3])
 
 	if (!(vr.frame.hand_valid[1] & 2))
 		return 0;
-	rotate(vr.frame.aim[1].orientation, xr_forward, local);
+	rotate(vr.aim_pose.orientation, xr_forward, local);
 	to_halo(local, 1.0f, 0.0f, out);
 	return 1;
 }
@@ -573,6 +681,7 @@ int vr_aim(float game_yaw, int seated, float out_forward[3])
 		vr.recentre_held = 0;
 	}
 	head_forward(head);
+	update_aim_pose();
 	/* the hand aims on foot; in a seat (a vehicle, a turret) the head
 	steers as the game's camera would */
 	memcpy(aim, head, sizeof(aim));
@@ -674,7 +783,7 @@ int vr_hand_ray(const float position[3], float out_origin[3], float out_directio
 
 	if (!vr_hand_aiming() || !(vr.frame.hand_valid[1] & 2))
 		return 0;
-	return hand_view(&vr.frame.aim[1], NULL, position, out_origin, out_direction, up);
+	return hand_view(&vr.aim_pose, NULL, position, out_origin, out_direction, up);
 }
 
 int vr_weapon_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3])
@@ -687,7 +796,7 @@ int vr_weapon_view(const float position[3], float out_position[3], float out_for
 	/* the grip's place, turned as the aim is, moved to where the game's
 	camera would be for the weapon's model to sit in the hand
 	(OpenXR's x right, y up, z back) */
-	pose = vr.frame.aim[1];
+	pose = vr.aim_pose;
 	memcpy(pose.position, vr.frame.grip[1].position, sizeof(pose.position));
 	extra[0] = -vr.weapon_offset[0];
 	extra[1] = -vr.weapon_offset[1];
@@ -1066,9 +1175,9 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			/* along the hand's aim in the runtime's space, facing the head,
 			about a degree across wherever it lands */
 			draw_reticle();
-			rotate(vr.frame.aim[1].orientation, xr_forward, direction);
+			rotate(vr.aim_pose.orientation, xr_forward, direction);
 			for (axis = 0; axis < 3; axis++)
-				layers.reticle_pose.position[axis] = vr.frame.aim[1].position[axis] + direction[axis] * vr.reticle_distance;
+				layers.reticle_pose.position[axis] = vr.aim_pose.position[axis] + direction[axis] * vr.reticle_distance;
 			memcpy(layers.reticle_pose.orientation, vr.frame.head.orientation, sizeof(layers.reticle_pose.orientation));
 			layers.reticle_size[0] = layers.reticle_size[1] = 0.018f * vr.reticle_distance;
 			layers.flags |= HALO_XR_LAYER_RETICLE;
@@ -1094,8 +1203,9 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	if (vr.timing)
 		copied = now_ms();
 	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
-		platform_log("vr: aim at the dump: %s, %s, heading %.1f, head yaw %.1f, aim yaw %.1f",
+		platform_log("vr: aim at the dump: %s, %s%s, heading %.1f, head yaw %.1f, aim yaw %.1f",
 			vr.seated ? "seated" : "on foot", vr.hand_aiming ? "hand aims" : "head aims",
+			vr.two_handed ? " with both hands" : "",
 			vr.heading * 57.29578f, vr.head_yaw * 57.29578f, vr.aim_yaw * 57.29578f);
 	frame_end(&layers);
 	if (vr.timing)
