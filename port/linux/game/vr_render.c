@@ -47,10 +47,12 @@ static struct
 	/* a cutscene eye's frustum turned in, in the bounds' units */
 	real cinema_shift[2];
 	real_rectangle2d eye_bounds[2];
-	/* the HUD pass is drawn from the head (head_camera), over the panel's
-	field */
+	/* the HUD pass is drawn from the head's place, turned as its panel is
+	(vr_hud_view), over the panel's field */
 	boolean hud_from_head;
 	real_rectangle2d hud_bounds;
+	real_point3d hud_position;
+	real_vector3d hud_forward, hud_up;
 	/* the head's yaw (radians), for the motion sensor */
 	boolean head_yaw_valid;
 	real head_yaw;
@@ -459,7 +461,8 @@ short vr_render_windows(
 			vr_render.head_camera.position = position;
 			vr_render.head_camera.forward = forward;
 			vr_render.head_camera.up = up;
-			vr_render.hud_from_head = TRUE;
+			vr_render.hud_from_head = vr_hud_view(vr_render.game_camera_position.n, heading.n,
+				vr_render.hud_position.n, vr_render.hud_forward.n, vr_render.hud_up.n);
 			/* (looking straight up or down, the last yaw holds) */
 			if (horizontal > 0.2f)
 			{
@@ -468,7 +471,7 @@ short vr_render_windows(
 			}
 		}
 	}
-	/* the HUD, drawn from the head over its head-locked panel's field: its
+	/* the HUD, drawn from the head's place over its panel's field: its
 	markers (nav points, friends' names) land on what they mark, and with
 	the head aiming its crosshair is where the head looks */
 	windows[2] = player;
@@ -477,9 +480,9 @@ short vr_render_windows(
 	{
 		struct render_camera *camera = &windows[2].rasterizer_camera;
 
-		camera->position = vr_render.head_camera.position;
-		camera->forward = vr_render.head_camera.forward;
-		camera->up = vr_render.head_camera.up;
+		camera->position = vr_render.hud_position;
+		camera->forward = vr_render.hud_forward;
+		camera->up = vr_render.hud_up;
 		camera->vertical_field_of_view = _pi * 0.5f;
 		windows[2].render_camera = *camera;
 		vr_hud_bounds((real)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0) /

@@ -21,6 +21,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Aim smoothing when zoomed, haptics | Built, **not yet run on the device.** |
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
 | Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
+| Near and leash HUD modes (`vr.hud_mode`) | Built, **not yet run on the device.** |
 | Menu laser pointer | Built, **not yet run on the device.** |
 | Room-scale walking | Built (`vr.roomscale`, off by default), **not yet run on the device.** |
 | VR settings in the pause menu | Built, **not yet run on the device.** |
@@ -108,12 +109,23 @@ texture names, which it draws into directly.
   lens-flare occlusion and fog history stay per eye.
 - **Eye resolve.** `vr_render_window_end` copies each eye's back buffer into its swapchain image.
 - **HUD pass.** It clears to transparent and draws only `interface_draw_screen`, the screen
-  flash and the UI widgets. `vr_present` shows that image head-locked with alpha, far away
-  (`vr.hud_distance` 15 m, `vr.hud_width` 10 m, about 37° across, as HaloCEVR's), so the eyes
-  needn't refocus between it and the world.
-  - It is drawn from the head's camera, with frustum bounds matching the panel's field
-    (`vr_hud_bounds`). Nav points and friends' names are projected from where the eyes are, so
-    they sit over what they mark (not where the hand points).
+  flash and the UI widgets. `vr_present` shows that image as a quad layer with alpha, placed by
+  `vr.hud_mode`:
+
+  | `vr.hud_mode` | Panel | Placement |
+  | --- | --- | --- |
+  | `far` (default) | 15 m away, 10 m wide (37°), as HaloCEVR's | Head-locked in VIEW space, so it turns with the head including its roll. The eyes needn't refocus between it and the world |
+  | `near` | 1.5 m away, 1.1 m wide (40°) | In LOCAL space at the head's position, turned by the head's yaw and pitch, never its roll (the pitch is held short of 80°) |
+  | `leash` | 1.5 m away, 1.1 m wide (40°) | In LOCAL space, level at the head's height, and following the head's position. It keeps its yaw until the head's yaw is more than 25° from it, then eases to the head's with a 0.1 s time constant (about 0.3 s). A recentre or a return from a flat screen puts it ahead of the head |
+
+  `vr.hud_distance` and `vr.hud_width` override the mode's distance and width when above 0
+  (0, the default, is the mode's own). This is the cross-port standard's HUD setting. The
+  default stays `far` until the user has worn the three side by side.
+  - It is drawn from the head's place, turned as the panel is (`vr_hud_view`), with frustum
+    bounds matching the panel's field (`vr_hud_bounds`, from the same distance and width in
+    every mode). Nav points and friends' names are projected from where the eyes are, so
+    they sit over what they mark (not where the hand points). With `vr.aim = "head"`, the
+    leash's crosshair is at the panel's centre, not where the head aims.
   - The motion sensor turns with the head (`vr_render_motion_sensor_yaw`), as the HUD does.
 - **Once per frame** (left eye only): the sky's animation phase (`render_sky.c`), weather
   simulation, glow particles, and the first-person weapon's pose. The weapon is posed from the
@@ -253,7 +265,8 @@ along it as walking does. Then that place to stand moves to the head.
 `enabled`, `stereo`, `resolution_scale` (1.5), `refresh_rate` (90), `world_scale` (0.328084 units/m),
 `cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
 ("ik" / "hidden" / "animated"),
-`screen_distance`, `screen_width`, `hud_distance`, `hud_width`, `aim` ("head"/"hand"),
+`screen_distance`, `screen_width`, `hud_mode` ("far"/"near"/"leash"), `hud_distance` and `hud_width`
+(0: the mode's own), `aim` ("head"/"hand"),
 `weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`, `vehicle_view`,
 `vehicle_steering`, `controls` ("vr"/"pad"), `move_relative` ("head"/"left"/"right"),
 `two_handed`, `left_handed`, `melee_speed`, `flashlight_distance`, `crouch_height`, `holsters`,
@@ -283,10 +296,11 @@ Diagnostics:
   - `vr.diag_drive_seconds` seats you as a driver for unattended tests; spawn a vehicle first
     with `cheat_all_vehicles`.
   - Untested on the device.
-- **The HUD** is a flat panel locked to the head. Its image is the quad swapchain (1280×960,
-  about 34 px a degree at the default size), shared with the flat screen.
-- **Existing `config.toml` files** keep the HUD's old 1.5 m / 1.4 m (the file holds every key):
-  set `vr.hud_distance = 15` and `vr.hud_width = 10` there.
+- **The HUD** is a flat panel. Its image is the quad swapchain (1280×960, about 34 px a degree
+  at the default size, a little less across the near and leash panels' 40°), shared with the
+  flat screen. The near and leash panels sit in LOCAL space at the predicted pose, so unlike
+  `far` (VIEW space) they can swim by the head's prediction error. Which mode is best is
+  for a wear test to say.
 - **Comfort options** are missing: no vignette, no seated or standing height.
 - **Map loads** block the game loop. SteamVR shows its own loading state while one runs.
 - **Battery.** The Frame discharges even on the Mac's USB.

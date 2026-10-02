@@ -36,8 +36,17 @@ static struct
 	int srgb_write_control;
 	/* the flat screen (vr.screen_distance, vr.screen_width), metres */
 	float screen_distance, screen_width;
-	/* the HUD's layer, head-locked (vr.hud_distance, vr.hud_width) */
+	/* the HUD's layer (vr.hud_mode, vr.hud_distance, vr.hud_width): metres
+	ahead and across, by the mode's own unless the settings override them */
+	int hud_mode;
 	float hud_distance, hud_width;
+	/* the near and leash modes' panel, in LOCAL space, set once a frame
+	(update_hud_panel): its pose, and for the leash its yaw (about +y) and
+	whether it is easing to the head's */
+	struct halo_xr_pose hud_pose;
+	float hud_yaw;
+	int hud_yaw_valid, hud_following;
+	unsigned int hud_serial, frame_serial;
 	int stereo_enabled;
 	/* world units per metre (vr.world_scale) */
 	float units_per_metre;
@@ -150,6 +159,50 @@ int vr_active(void)
 	return vr.active;
 }
 
+/* the HUD's modes (vr.hud_mode), after the cross-port standard: far (the
+HUD far off, as HaloCEVR's, drawn from the head so markers sit over their
+targets), near (about 40 degrees across, close, following the head's yaw and
+pitch but never its roll) and leash (about as near, held in the room, and
+turned to the head's yaw only when it has strayed 25 degrees) */
+enum
+{
+	VR_HUD_FAR,
+	VR_HUD_NEAR,
+	VR_HUD_LEASH,
+};
+
+/* each mode's distance and width, metres (the panel spans the width over the
+distance: far 37 degrees, near 40, leash 40) */
+static const float hud_mode_distance[] = { 15.0f, 1.5f, 1.5f };
+static const float hud_mode_width[] = { 10.0f, 1.1f, 1.1f };
+
+/* a leash panel turns to the head after the head strays this far from it
+(radians), over about 0.3 s (three of the time constant) */
+#define HUD_LEASH_DEAD_ZONE 0.436332f
+#define HUD_LEASH_TIME_CONSTANT 0.1f
+
+static void load_hud(void)
+{
+	const char *mode = config_string("vr.hud_mode");
+	int previous = vr.hud_mode;
+	float distance = (float)config_real("vr.hud_distance"), width = (float)config_real("vr.hud_width");
+
+	vr.hud_mode = !strcmp(mode, "near") ? VR_HUD_NEAR : !strcmp(mode, "leash") ? VR_HUD_LEASH : VR_HUD_FAR;
+	if (strcmp(mode, "far") && vr.hud_mode == VR_HUD_FAR)
+		platform_log("vr: vr.hud_mode \"%s\" is none of far, near or leash; using far", mode);
+	/* the settings override the mode's own when above 0 */
+	vr.hud_distance = distance > 0.0f ? distance : hud_mode_distance[vr.hud_mode];
+	vr.hud_width = width > 0.0f ? width : hud_mode_width[vr.hud_mode];
+	if (vr.hud_mode != previous)
+		vr.hud_yaw_valid = 0;
+	if (vr.hud_mode != previous || !vr.settings_generation)
+	{
+		platform_log("vr: HUD %s, %.2f m across at %.2f m (%.0f degrees)", vr.hud_mode == VR_HUD_NEAR ? "near" :
+			vr.hud_mode == VR_HUD_LEASH ? "leash" : "far", vr.hud_width, vr.hud_distance,
+			2.0f * atanf(vr.hud_width * 0.5f / vr.hud_distance) * 57.29578f);
+	}
+}
+
 void vr_reload_settings(void)
 {
 	static int left_handed = -1;
@@ -182,6 +235,7 @@ void vr_reload_settings(void)
 	vr.crouch_height = (float)config_real("vr.crouch_height");
 	vr.holsters = config_boolean("vr.holsters");
 	vr.haptics = (float)config_real("vr.haptics");
+	load_hud();
 	vr.scope_enabled = config_boolean("vr.scope");
 	vr.scope_size = (float)config_real("vr.scope_size");
 	if (vr.roomscale != config_boolean("vr.roomscale"))
@@ -226,8 +280,6 @@ void vr_initialize(void)
 	vr.srgb_write_control = host_gl_has_extension("GL_EXT_sRGB_write_control");
 	vr.screen_distance = (float)config_real("vr.screen_distance");
 	vr.screen_width = (float)config_real("vr.screen_width");
-	vr.hud_distance = (float)config_real("vr.hud_distance");
-	vr.hud_width = (float)config_real("vr.hud_width");
 	vr.stereo_enabled = config_boolean("vr.stereo");
 	vr.cinema_separation = (float)config_real("vr.cinema_separation");
 	vr.cinema_convergence = (float)config_real("vr.cinema_convergence");
@@ -693,12 +745,15 @@ static int frame_begin(void)
 		return 0;
 	}
 	vr.frame_begun = 1;
+	vr.frame_serial++;
 	/* a recentre moves the room's origin: walking resumes from the head */
 	if (vr.frame.flags & HALO_XR_FRAME_RECENTRED)
 	{
 		vr.room_previous[0] = vr.room_now[0] = vr.frame.head.position[0];
 		vr.room_previous[1] = vr.room_now[1] = vr.frame.head.position[2];
 		vr.room_held = 1;
+		/* the leash's panel comes back ahead of where the head faces */
+		vr.hud_yaw_valid = 0;
 	}
 	layout_controls();
 	update_gestures();
@@ -1440,8 +1495,93 @@ int vr_head_view(const float position[3], const float forward[3],
 	return 1;
 }
 
+/* The near and leash panels' pose in LOCAL space for this frame, once (from
+the head as vr_stereo_begin leaves it, a synthetic one with vr.force_render).
+Near: ahead of the head at the panel's distance, turned by the head's yaw and
+pitch (the pitch kept short of straight up or down) and not its roll. Leash:
+level at the head's height, ahead of the yaw it holds, which eases to the
+head's (about 0.3 s) once the head has turned HUD_LEASH_DEAD_ZONE from it and
+stays put otherwise; both follow the head's position. The far panel is
+head-locked in VIEW space and needs none (vr_present). */
+static void update_hud_panel(void)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
+	float forward[3], horizontal, pitch, yaw, cosine, panel_forward[3];
+	int axis;
+
+	if (vr.hud_serial == vr.frame_serial)
+		return;
+	vr.hud_serial = vr.frame_serial;
+	if (vr.hud_mode == VR_HUD_FAR)
+		return;
+	rotate(vr.frame.head.orientation, xr_forward, forward);
+	horizontal = sqrtf(forward[0] * forward[0] + forward[2] * forward[2]);
+	/* (looking straight up or down, the yaw held holds) */
+	if (horizontal > 0.05f)
+		yaw = atan2f(-forward[0], -forward[2]);
+	else
+		yaw = vr.hud_yaw_valid ? vr.hud_yaw : 0.0f;
+	pitch = 0.0f;
+	if (vr.hud_mode == VR_HUD_NEAR)
+	{
+		pitch = atan2f(forward[1], horizontal);
+		if (pitch > 1.4f)
+			pitch = 1.4f;
+		else if (pitch < -1.4f)
+			pitch = -1.4f;
+		vr.hud_yaw = yaw;
+		vr.hud_yaw_valid = 1;
+	}
+	else if (!vr.hud_yaw_valid)
+	{
+		vr.hud_yaw = yaw;
+		vr.hud_yaw_valid = 1;
+		vr.hud_following = 0;
+	}
+	else if (horizontal > 0.05f)
+	{
+		float seconds = (float)(vr.frame.predicted_display_period * 1e-9);
+		float off = wrap_angle(yaw - vr.hud_yaw);
+
+		if (fabsf(off) > HUD_LEASH_DEAD_ZONE)
+			vr.hud_following = 1;
+		if (vr.hud_following)
+		{
+			vr.hud_yaw = wrap_angle(vr.hud_yaw + off * (1.0f - expf(-seconds / HUD_LEASH_TIME_CONSTANT)));
+			if (fabsf(wrap_angle(yaw - vr.hud_yaw)) < 0.0087f)
+				vr.hud_following = 0;
+		}
+	}
+	yaw = vr.hud_yaw;
+	cosine = cosf(pitch);
+	panel_forward[0] = -sinf(yaw) * cosine;
+	panel_forward[1] = sinf(pitch);
+	panel_forward[2] = -cosf(yaw) * cosine;
+	look_rotation(panel_forward, xr_up, vr.hud_pose.orientation);
+	for (axis = 0; axis < 3; axis++)
+		vr.hud_pose.position[axis] = vr.frame.head.position[axis] + panel_forward[axis] * vr.hud_distance;
+}
+
+int vr_hud_view(const float position[3], const float forward[3],
+	float out_position[3], float out_forward[3], float out_up[3])
+{
+	float offset[3];
+
+	if (!vr.stereo)
+		return 0;
+	update_hud_panel();
+	head_offset(offset);
+	/* far: the head's own view; near and leash: the panel's turn, from the
+	head's place */
+	view(offset, vr.hud_mode == VR_HUD_FAR ? vr.frame.head.orientation : vr.hud_pose.orientation, position, forward,
+		out_position, out_forward, out_up);
+	return 1;
+}
+
 void vr_hud_bounds(float aspect, float bounds[4])
 {
+	/* the panel's field seen from where the camera is, as its distance and
+	width (in every mode) make it */
 	float x = vr.hud_distance > 0.0f ? vr.hud_width * 0.5f / vr.hud_distance : 1.0f;
 
 	bounds[0] = -x / aspect;
@@ -1688,14 +1828,23 @@ int vr_ui_pointer(int menus_active, struct halo_ui_pointer *pointer)
 	pause menu) the HUD's panel ahead of the head */
 	if (vr.mode == VR_MODE_STEREO)
 	{
-		static const float ahead[3] = { 0.0f, 0.0f, -1.0f };
-		float offset[3];
-		int axis;
+		if (vr.hud_mode == VR_HUD_FAR)
+		{
+			static const float ahead[3] = { 0.0f, 0.0f, -1.0f };
+			float offset[3];
+			int axis;
 
-		rotate(vr.frame.head.orientation, ahead, offset);
-		memcpy(screen.orientation, vr.frame.head.orientation, sizeof(screen.orientation));
-		for (axis = 0; axis < 3; axis++)
-			screen.position[axis] = vr.frame.head.position[axis] + offset[axis] * vr.hud_distance;
+			rotate(vr.frame.head.orientation, ahead, offset);
+			memcpy(screen.orientation, vr.frame.head.orientation, sizeof(screen.orientation));
+			for (axis = 0; axis < 3; axis++)
+				screen.position[axis] = vr.frame.head.position[axis] + offset[axis] * vr.hud_distance;
+		}
+		else
+		{
+			/* (the panel as this frame's render, or the last, placed it) */
+			update_hud_panel();
+			screen = vr.hud_pose;
+		}
 		width = vr.hud_width;
 	}
 	else if (vr.mode == VR_MODE_FLAT)
@@ -1982,6 +2131,7 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			if (mode != VR_MODE_STEREO)
 				place_screen(mode == VR_MODE_CINEMA ? vr.cinema_distance : vr.screen_distance);
 			vr.mode = mode;
+			vr.hud_yaw_valid = 0;
 		}
 		else if ((vr.frame.flags & HALO_XR_FRAME_RECENTRED) && mode != VR_MODE_STEREO)
 		{
@@ -2008,9 +2158,20 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			layers.flags |= HALO_XR_LAYER_PROJECTION;
 		if (copy_hud(texture))
 		{
-			layers.flags |= HALO_XR_LAYER_QUAD | HALO_XR_LAYER_QUAD_HEAD_LOCKED | HALO_XR_LAYER_QUAD_ALPHA;
-			layers.quad_pose.position[2] = -vr.hud_distance;
-			layers.quad_pose.orientation[3] = 1.0f;
+			layers.flags |= HALO_XR_LAYER_QUAD | HALO_XR_LAYER_QUAD_ALPHA;
+			if (vr.hud_mode == VR_HUD_FAR)
+			{
+				/* head-locked, in VIEW space: exactly where the HUD pass drew from */
+				layers.flags |= HALO_XR_LAYER_QUAD_HEAD_LOCKED;
+				layers.quad_pose.position[2] = -vr.hud_distance;
+				layers.quad_pose.orientation[3] = 1.0f;
+			}
+			else
+			{
+				/* held in LOCAL space, at the head's place and the panel's turn */
+				update_hud_panel();
+				layers.quad_pose = vr.hud_pose;
+			}
 			layers.quad_size[0] = vr.hud_width;
 			layers.quad_size[1] = vr.hud_width * 0.75f;
 		}

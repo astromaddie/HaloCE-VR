@@ -269,12 +269,21 @@ static const struct config_setting config_settings[] =
 		"Game units per metre of head movement and eye separation: the game's\n"
 		"unit is 10 feet (0.328084 per metre). Larger makes the world feel\n"
 		"smaller." },
-	{ "vr.hud_distance", _config_real, "15.0", "HALO_VR_HUD_DISTANCE", _environment_value, _platform_vr,
-		"How far ahead of the eyes the HUD floats, in metres: far, so the eyes\n"
-		"need not refocus between it and the world." },
-	{ "vr.hud_width", _config_real, "10.0", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
-		"The HUD's width, in metres (its height is three quarters); with\n"
-		"vr.hud_distance, how much of the view it spans (10 at 15: 37 degrees)." },
+	{ "vr.hud_mode", _config_string, "\"far\"", "HALO_VR_HUD_MODE", _environment_value, _platform_vr,
+		"Where the HUD floats: \"far\" (15 m away, 10 m wide, 37 degrees, drawn from\n"
+		"the head so markers sit over their targets, and locked to the head), \"near\"\n"
+		"(1.5 m away, 1.1 m wide, 40 degrees, following the head's yaw and pitch\n"
+		"but not its roll) or \"leash\" (as near, but held in the room: it turns to\n"
+		"face you only when your head has turned 25 degrees from it, over about a\n"
+		"third of a second; with vr.aim \"head\" its crosshair is not where you\n"
+		"aim)." },
+	{ "vr.hud_distance", _config_real, "0.0", "HALO_VR_HUD_DISTANCE", _environment_value, _platform_vr,
+		"How far ahead of the eyes the HUD floats, in metres, instead of its\n"
+		"vr.hud_mode's own (15 far, 1.5 near and leash); 0 for the mode's." },
+	{ "vr.hud_width", _config_real, "0.0", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
+		"The HUD's width, in metres (its height is three quarters), instead of\n"
+		"its vr.hud_mode's own (10 far, 1.1 near and leash); 0 for the mode's.\n"
+		"With vr.hud_distance, how much of the view it spans." },
 	{ "vr.refresh_rate", _config_real, "90.0", "HALO_VR_REFRESH_RATE", _environment_value, _platform_vr,
 		"The headset's display rate to ask for, in hertz: the highest the\n"
 		"runtime offers at or below it; 0 leaves the runtime's choice. SteamVR on\n"
