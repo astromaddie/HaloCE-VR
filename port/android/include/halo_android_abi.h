@@ -142,6 +142,7 @@ struct halo_xr_frame
 #define HALO_XR_LAYER_PROJECTION 0x1u     /* both eye swapchains, as posed this frame */
 #define HALO_XR_LAYER_QUAD 0x2u
 #define HALO_XR_LAYER_QUAD_HEAD_LOCKED 0x4u /* the quad's pose is in VIEW space, else LOCAL */
+#define HALO_XR_LAYER_QUAD_ALPHA 0x8u       /* blend the quad by its alpha, else opaque */
 
 struct halo_xr_layers
 {

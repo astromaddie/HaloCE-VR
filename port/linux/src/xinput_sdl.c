@@ -35,6 +35,10 @@ drive the controller.
 #include "platform.h"
 #include "sdl_platform.h"
 #include "port_config.h"
+#include "vr.h"
+#ifdef HALO_VR
+#include "halo_android_abi.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <math.h>
@@ -440,6 +444,58 @@ static void sdl_gamepad_state(SDL_Gamepad *gamepad, XINPUT_GAMEPAD *pad)
 	if (abs(value) > abs(pad->sThumbRY)) pad->sThumbRY = value;
 }
 
+/* the headset's controllers (HALO_VR), merged as a second pad would be */
+static void vr_gamepad_state(XINPUT_GAMEPAD *pad)
+{
+#ifdef HALO_VR
+	static const struct
+	{
+		unsigned int bit;
+		int analog_index;
+	} analog[] =
+	{
+		{ HALO_XR_BUTTON_A, XINPUT_GAMEPAD_A },
+		{ HALO_XR_BUTTON_B, XINPUT_GAMEPAD_B },
+		{ HALO_XR_BUTTON_X, XINPUT_GAMEPAD_X },
+		{ HALO_XR_BUTTON_Y, XINPUT_GAMEPAD_Y },
+		{ HALO_XR_BUTTON_WHITE, XINPUT_GAMEPAD_WHITE },
+		{ HALO_XR_BUTTON_BLACK, XINPUT_GAMEPAD_BLACK },
+	};
+	unsigned int buttons, index;
+	float trigger[2], thumb[4];
+	SHORT value;
+	int axis;
+
+	if (!vr_controller(&buttons, trigger, thumb))
+		return;
+	/* the digital bits are the Xbox pad's own (halo_android_abi.h) */
+	pad->wButtons |= (WORD)(buttons & 0xff);
+	for (index = 0; index < sizeof(analog) / sizeof(analog[0]); index++)
+		merge_button(pad, analog[index].analog_index, (buttons & analog[index].bit) != 0);
+	for (axis = 0; axis < 2; axis++)
+	{
+		int value8 = (int)(trigger[axis] * 255.0f + 0.5f);
+		int which = axis ? XINPUT_GAMEPAD_RIGHT_TRIGGER : XINPUT_GAMEPAD_LEFT_TRIGGER;
+
+		if (value8 > 255) value8 = 255;
+		if (value8 > pad->bAnalogButtons[which])
+			pad->bAnalogButtons[which] = (BYTE)value8;
+	}
+	for (axis = 0; axis < 4; axis++)
+	{
+		float v = thumb[axis] < -1.0f ? -1.0f : thumb[axis] > 1.0f ? 1.0f : thumb[axis];
+		SHORT *target = axis == 0 ? &pad->sThumbLX : axis == 1 ? &pad->sThumbLY :
+			axis == 2 ? &pad->sThumbRX : &pad->sThumbRY;
+
+		value = (SHORT)(v * 32767.0f);
+		if (abs(value) > abs(*target))
+			*target = value;
+	}
+#else
+	(void)pad;
+#endif
+}
+
 /* ---------- XAPI */
 
 VOID WINAPI XInitDevices(DWORD preallocation_type_count, PXDEVICE_PREALLOC_TYPE preallocation_types)
@@ -547,6 +603,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			keyboard_gamepad(&input, &state->Gamepad);
 		if (count > 0)
 			sdl_gamepad_state(gamepads[0], &state->Gamepad);
+		vr_gamepad_state(&state->Gamepad);
 		test_input_gamepad(&state->Gamepad);
 		if (abs(state->Gamepad.sThumbRX) > STICK_AIMING_DEFLECTION ||
 			abs(state->Gamepad.sThumbRY) > STICK_AIMING_DEFLECTION)

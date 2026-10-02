@@ -251,6 +251,13 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
+	{ "vr.resolution_scale", _config_real, "0.8", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
+		"The game's picture in the headset as a fraction of the runtime's\n"
+		"recommended eye resolution (1728x1728 on the Steam Frame), 0.5 to 1.5." },
+	{ "vr.screen_distance", _config_real, "2.5", "HALO_VR_SCREEN_DISTANCE", _environment_value, _platform_vr,
+		"How far ahead the flat screen (menus, cutscenes) floats, in metres." },
+	{ "vr.screen_width", _config_real, "2.4", "HALO_VR_SCREEN_WIDTH", _environment_value, _platform_vr,
+		"The flat screen's width, in metres (its height is three quarters)." },
 	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
 		"Before the game starts, show dim test colours in each eye for this many\n"
 		"seconds and log the OpenXR frame rate; 0 skips it." },

@@ -25,6 +25,7 @@ Conventions carried over from the Xbox:
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
 #include "port_config.h"
+#include "vr.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -88,6 +89,18 @@ static void screen_mode_choose(long *width, float scale[2])
 	/* display.screen_width, or 0 for the display's shape, which the app
 	passes (port/android/host/host_main.c) */
 	const char *display = getenv("HALO_DISPLAY_WIDTH");
+
+#ifdef HALO_VR
+	/* in the headset the game draws the Xbox's 640x480, at the eyes'
+	resolution once the session exists (vr_frame.c) */
+	if (config_boolean("vr.enabled"))
+	{
+		*width = 640;
+		if (!vr_screen_scale(scale))
+			scale[0] = scale[1] = 1.0f;
+		return;
+	}
+#endif
 
 	*width = config_integer("display.screen_width");
 	if (*width <= 0)
@@ -3648,6 +3661,14 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		}
 		x = (window_width - width) / 2;
 		y = (window_height - height) / 2;
+		if (vr_active())
+		{
+			/* the headset's frame instead of the window's */
+			vr_present(framebuffer_get(back_buffer->target.texture, 0), (int)back_buffer->target.gl_width,
+				(int)back_buffer->target.gl_height);
+		}
+		else
+		{
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 		glDisable(GL_SCISSOR_TEST);
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -3658,6 +3679,7 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		glBlitFramebuffer(0, 0, (GLint)back_buffer->target.gl_width, (GLint)back_buffer->target.gl_height,
 			x, y + height, x + width, y, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 		platform_video_swap();
+		}
 		xgpu_gl_state_invalidate();
 		xgpu_texture_cache_begin_frame();
 #ifdef HALO_ANDROID

@@ -954,7 +954,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	{
 		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_QUAD];
 
-		quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		if (layers->flags & HALO_XR_LAYER_QUAD_ALPHA)
+			quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
 		quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 		quad.subImage.swapchain = swapchain->handle;
 		quad.subImage.imageRect.extent.width = (int32_t)swapchain->width;
