@@ -18,9 +18,13 @@ settings rewrite their own lines (config_write_*).
 #include "platform.h"
 #include "port_config.h"
 #include "tomlc17.h"
+#ifdef HALO_VR
+#include "sfvr/sfvr_settings.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <ctype.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +60,9 @@ enum
 	_platform_all = _platform_desktop | _platform_android,
 	/* the Android build for VR headsets (HALO_VR) only */
 	_platform_vr = 4,
+	/* a setting of an older version, still read (and migrated) but never
+	written or added to a file (config_migrate) */
+	_platform_legacy = 8,
 };
 
 struct config_setting
@@ -260,10 +267,11 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
-	{ "vr.settings_version", _config_integer, "1", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
+	{ "vr.settings_version", _config_integer, "2", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
 		"The version of these settings' meaning, kept by the game to bring an\n"
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
-		"the HUD mode's own). Leave it be." },
+		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
+		"vr.snap_turn). Leave it be." },
 	{ "vr.resolution_scale", _config_real, "1.5", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
 		"The game's picture in the headset as a fraction of the runtime's\n"
 		"recommended eye resolution (1728x1728 on the Steam Frame), 0.75 to 1.5;\n"
@@ -373,11 +381,17 @@ static const struct config_setting config_settings[] =
 		"As vr.weapon_offset_right, above the eye (negative is below)." },
 	{ "vr.weapon_offset_back", _config_real, "-0.20", "HALO_VR_WEAPON_BACK", _environment_value, _platform_vr,
 		"As vr.weapon_offset_right, behind the eye (negative is ahead)." },
-	{ "vr.snap_turn", _config_real, "30.0", "HALO_VR_SNAP_TURN", _environment_value, _platform_vr,
-		"Degrees the right stick turns you at a flick; 0 turns smoothly instead." },
+	{ "vr.turn_mode", _config_string, "\"snap\"", "HALO_VR_TURN_MODE", _environment_value, _platform_vr,
+		"What the right stick's left and right do: \"snap\" (a flick turns you\n"
+		"vr.snap_angle), \"smooth\" (turns you at vr.smooth_turn_speed) or \"off\"." },
+	{ "vr.snap_angle", _config_integer, "30", "HALO_VR_SNAP_ANGLE", _environment_value, _platform_vr,
+		"Degrees a snap turn turns you: 15, 30, 45, 60 or 90." },
 	{ "vr.smooth_turn_speed", _config_real, "120.0", "HALO_VR_SMOOTH_TURN_SPEED", _environment_value, _platform_vr,
-		"With vr.snap_turn 0: degrees a second the right stick turns you at full\n"
-		"push." },
+		"With vr.turn_mode \"smooth\": degrees a second the right stick turns you\n"
+		"at full push, 30 to 360." },
+	{ "vr.snap_turn", _config_real, "30.0", "HALO_VR_SNAP_TURN", _environment_value, _platform_legacy,
+		"(Version 1's turning: degrees of a snap turn, 0 for smooth. Read from an\n"
+		"old file and replaced by vr.turn_mode and vr.snap_angle.)" },
 	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
 		"Draw stereo frames with the headset off (in standby), from a head\n"
 		"looking ahead: for testing." },
@@ -836,12 +850,11 @@ static char *config_edit_text(const char *input, const char *name, const char *w
 /* ---------- ranges (the VR build's numbers) */
 
 /* The range of each numeric VR setting; one outside it is clamped when the
-settings load (from the file or the environment), with a log line. Ranges
-are the cross-port standard's where it gives one (resolution_scale 0.75 to
-1.5, snap angles 15 to 90 degrees, smooth turn 30 to 360 degrees a second,
-haptics 0 to 1, the menu distances of Meta's and Microsoft's guidance), and
-otherwise what the setting can sensibly be. `or_zero` also allows 0, which
-means off or the default where the setting says so. */
+settings load (from the file or the environment), with a log line. Where
+sfvr's key registry (port/third_party/sfvr; the cross-port standard) has the
+key, its range is the one used, and the numbers here are only the fallback
+(`sfvr` below says which); otherwise they are limits chosen here. `or_zero`
+also allows 0, which means off or the default where the setting says so. */
 static const struct config_range
 {
 	const char *name;
@@ -849,13 +862,13 @@ static const struct config_range
 	int or_zero;
 } config_ranges[] =
 {
-	{ "vr.resolution_scale", 0.75, 1.5, 0 },
+	{ "vr.resolution_scale", 0.75, 1.5, 0 },            /* sfvr */
 	{ "vr.screen_distance", 0.8, 5.0, 0 },
 	{ "vr.screen_width", 0.5, 6.0, 0 },
 	{ "vr.world_scale", 0.1, 1.0, 0 },
-	{ "vr.hud_distance", 0.8, 30.0, 1 },
+	{ "vr.hud_distance", 0.8, 20.0, 1 },                /* sfvr */
 	{ "vr.hud_width", 0.3, 30.0, 1 },
-	{ "vr.refresh_rate", 60.0, 144.0, 1 },
+	{ "vr.refresh_rate", 72.0, 144.0, 1 },              /* sfvr */
 	{ "vr.cinema_separation", 0.0, 0.1, 0 },
 	{ "vr.cinema_convergence", 0.5, 20.0, 0 },
 	{ "vr.cinema_distance", 1.0, 10.0, 0 },
@@ -863,21 +876,21 @@ static const struct config_range
 	{ "vr.melee_speed", 0.0, 10.0, 0 },
 	{ "vr.flashlight_distance", 0.0, 0.5, 0 },
 	{ "vr.crouch_height", 0.0, 0.6, 0 },
-	{ "vr.haptics", 0.0, 1.0, 0 },
+	{ "vr.haptics", 0.0, 1.0, 0 },                      /* sfvr */
 	{ "vr.scope_size", 0.0, 0.3, 0 },
 	{ "vr.weapon_offset_right", -0.5, 0.5, 0 },
 	{ "vr.weapon_offset_up", -0.5, 0.5, 0 },
 	{ "vr.weapon_offset_back", -0.5, 0.5, 0 },
-	{ "vr.snap_turn", 15.0, 90.0, 1 },
-	{ "vr.smooth_turn_speed", 30.0, 360.0, 0 },
-	{ "vr.diag_yaw", -360.0, 360.0, 0 },
-	{ "vr.diag_hand_yaw", -180.0, 180.0, 0 },
+	{ "vr.snap_angle", 15.0, 90.0, 0 },                 /* sfvr */
+	{ "vr.smooth_turn_speed", 30.0, 360.0, 0 },         /* sfvr */
+	{ "vr.diag_yaw", -360.0, 360.0, 0 },                /* sfvr */
+	{ "vr.diag_hand_yaw", -360.0, 360.0, 0 },           /* sfvr */
 	{ "vr.diag_drive_seconds", 0.0, 3600.0, 0 },
-	{ "vr.diag_walk_speed", -3.0, 3.0, 0 },
+	{ "vr.diag_walk_speed", 0.0, 5.0, 0 },              /* sfvr */
 	{ "vr.diag_zoom_seconds", 0.0, 3600.0, 0 },
-	{ "vr.dump_frame", 0.0, 1000000.0, 0 },
+	{ "vr.dump_frame", 0.0, 1000000.0, 0 },             /* sfvr */
 	{ "vr.dump_cinema_frame", 0.0, 1000000.0, 0 },
-	{ "vr.probe_seconds", 0.0, 3600.0, 0 },
+	{ "vr.probe_seconds", 0.0, 60.0, 0 },               /* sfvr */
 };
 
 static void config_clamp_ranges(void)
@@ -889,25 +902,37 @@ static void config_clamp_ranges(void)
 		const struct config_range *range = &config_ranges[range_index];
 		long index = config_setting_index(range->name);
 		struct config_value *value;
-		double number, clamped;
+		double number, clamped, minimum = range->minimum, maximum = range->maximum;
 
 		if (index < 0 || !(config_settings[index].platforms & CONFIG_PLATFORM))
 			continue;
+#ifdef HALO_VR
+		{
+			/* the standard's range, where sfvr has the key (its names have no "vr.") */
+			const sfvr_setting_key *key = sfvr_settings_find(range->name + 3);
+
+			if (key && (key->type == SFVR_SETTING_INT || key->type == SFVR_SETTING_FLOAT))
+			{
+				minimum = key->min;
+				maximum = key->max;
+			}
+		}
+#endif
 		value = &config_values[index];
 		number = config_settings[index].type == _config_integer ? (double)value->integer : value->real;
 		clamped = number;
 		/* (a number that is no number fails the first test) */
 		if (!(range->or_zero && number == 0.0))
 		{
-			if (!(number >= range->minimum))
-				clamped = range->minimum;
-			else if (number > range->maximum)
-				clamped = range->maximum;
+			if (!(number >= minimum))
+				clamped = minimum;
+			else if (number > maximum)
+				clamped = maximum;
 		}
 		if (clamped == number)
 			continue;
-		platform_log("settings: %s is %g, outside %g to %g%s; using %g", range->name, number, range->minimum,
-			range->maximum, range->or_zero ? " (or 0)" : "", clamped);
+		platform_log("settings: %s is %g, outside %g to %g%s; using %g", range->name, number, minimum, maximum,
+			range->or_zero ? " (or 0)" : "", clamped);
 		if (config_settings[index].type == _config_integer)
 			value->integer = (long)clamped;
 		else
@@ -918,16 +943,29 @@ static void config_clamp_ranges(void)
 /* ---------- versions */
 
 /* the meaning of the VR settings now (vr.settings_version) */
-#define CONFIG_VR_SETTINGS_VERSION 1
+#define CONFIG_VR_SETTINGS_VERSION 2
+
+/* sets a setting's value in memory from text */
+static void config_set_value(const char *name, const char *text)
+{
+	long index = config_setting_index(name);
+
+	if (index >= 0)
+		config_set_from_text(&config_values[index], config_settings[index].type, text);
+}
 
 /* Brings an older file's VR settings up to date, in the text and in
 config_values (already read from it): the file's version, 0 for a file from
-before there was one, to CONFIG_VR_SETTINGS_VERSION. The version's own line
-is added with the other missing settings (config_add_missing). Returns the
-edited text, or NULL if nothing changed. Versions:
+before there was one, to CONFIG_VR_SETTINGS_VERSION, which is written. Returns
+the edited text (a new string), or NULL if nothing changed; the caller reads
+it again before adding what is missing (config_add_missing), as it may have
+added keys itself. Versions:
 0 to 1: vr.hud_distance and vr.hud_width were written at 15 and 10 and are
 now 0 (the HUD mode's own), as an old default would otherwise override the
-near and leash modes. */
+near and leash modes.
+1 to 2: vr.snap_turn (degrees of a snap turn, 0 for smooth) is replaced by
+vr.turn_mode and vr.snap_angle; those are written from it, and it is commented
+out. A file with no vr.snap_turn gets the defaults (added with the rest). */
 static char *config_migrate(const char *text, toml_datum_t table)
 {
 	static const struct { const char *name; double old_default; } hud[] =
@@ -936,34 +974,93 @@ static char *config_migrate(const char *text, toml_datum_t table)
 		{ "vr.hud_width", 10.0 },
 	};
 	toml_datum_t version = toml_seek(table, "vr.settings_version");
-	char *result = NULL;
+	long found = version.type == TOML_INT64 ? (long)version.u.int64 : 0;
+	char *result = NULL, *edited;
 	size_t item;
 
-	if (!(CONFIG_PLATFORM & _platform_vr))
+	if (!(CONFIG_PLATFORM & _platform_vr) || toml_seek(table, "vr").type != TOML_TABLE)
 		return NULL;
-	if (version.type == TOML_INT64 && version.u.int64 > CONFIG_VR_SETTINGS_VERSION)
+	if (found > CONFIG_VR_SETTINGS_VERSION)
 	{
-		platform_log("settings: vr.settings_version %lld is newer than this version's %d; reading it as it is",
-			(long long)version.u.int64, CONFIG_VR_SETTINGS_VERSION);
+		platform_log("settings: vr.settings_version %ld is newer than this version's %d; reading it as it is",
+			found, CONFIG_VR_SETTINGS_VERSION);
 		return NULL;
 	}
-	if (version.type == TOML_INT64 && version.u.int64 >= 1)
+	if (found >= CONFIG_VR_SETTINGS_VERSION)
 		return NULL;
-	for (item = 0; item < sizeof(hud) / sizeof(hud[0]); item++)
+	if (found < 1)
 	{
-		long index = config_setting_index(hud[item].name);
-		char *edited;
+		for (item = 0; item < sizeof(hud) / sizeof(hud[0]); item++)
+		{
+			long index = config_setting_index(hud[item].name);
 
-		if (index < 0 || config_values[index].real != hud[item].old_default)
-			continue;
-		edited = config_edit_text(result ? result : text, hud[item].name, "0.0");
-		if (!edited)
-			continue;
+			if (index < 0 || config_values[index].real != hud[item].old_default)
+				continue;
+			edited = config_edit_text(result ? result : text, hud[item].name, "0.0");
+			if (!edited)
+				continue;
+			free(result);
+			result = edited;
+			config_values[index].real = 0.0;
+			platform_log("settings: %s was the old default %g: now 0 (the HUD mode's own)", hud[item].name,
+				hud[item].old_default);
+		}
+	}
+	if (found < 2 && toml_seek(table, "vr.snap_turn").type != TOML_UNKNOWN)
+	{
+		long index = config_setting_index("vr.snap_turn");
+		double degrees = index >= 0 ? config_values[index].real : 30.0;
+		char angle[16];
+		const char *mode = degrees > 0.0 ? "snap" : "smooth";
+		int snap = 30;
+
+		/* (the nearest of the angles the standard allows) */
+		if (degrees > 0.0)
+		{
+			static const int angles[] = { 15, 30, 45, 60, 90 };
+			size_t each;
+
+			for (each = 0, snap = angles[0]; each < sizeof(angles) / sizeof(angles[0]); each++)
+			{
+				if (fabs(degrees - angles[each]) < fabs(degrees - snap))
+					snap = angles[each];
+			}
+		}
+		snprintf(angle, sizeof(angle), "%d", snap);
+		config_set_value("vr.turn_mode", mode);
+		config_set_value("vr.snap_angle", angle);
+		/* (written as the file holds a string) */
+		{
+			char quoted[16];
+
+			snprintf(quoted, sizeof(quoted), "\"%s\"", mode);
+			edited = config_edit_text(result ? result : text, "vr.turn_mode", quoted);
+			if (edited)
+			{
+				free(result);
+				result = edited;
+			}
+		}
+		edited = config_edit_text(result ? result : text, "vr.snap_angle", angle);
+		if (edited)
+		{
+			free(result);
+			result = edited;
+		}
+		edited = config_edit_text(result ? result : text, "vr.snap_turn", NULL);
+		if (edited)
+		{
+			free(result);
+			result = edited;
+		}
+		platform_log("settings: vr.snap_turn %g is now vr.turn_mode \"%s\", vr.snap_angle %s", degrees, mode, angle);
+	}
+	config_set_value("vr.settings_version", "2");
+	edited = config_edit_text(result ? result : text, "vr.settings_version", "2");
+	if (edited)
+	{
 		free(result);
 		result = edited;
-		config_values[index].real = 0.0;
-		platform_log("settings: %s was the old default %g: now 0 (the HUD mode's own)", hud[item].name,
-			hud[item].old_default);
 	}
 	return result;
 }
@@ -1007,7 +1104,18 @@ static void config_load(void)
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
 			migrated = config_migrate(text, result.toptab);
-			completed = config_add_missing(migrated ? migrated : text, result.toptab);
+			if (migrated)
+			{
+				/* (what it added is not missing: the table is read again) */
+				toml_result_t again = toml_parse(migrated, (int)strlen(migrated));
+
+				completed = again.ok ? config_add_missing(migrated, again.toptab) : NULL;
+				toml_free(again);
+			}
+			else
+			{
+				completed = config_add_missing(text, result.toptab);
+			}
 			if ((completed || migrated) && !config_write_file(path, completed ? completed : migrated))
 				platform_log("settings: cannot write %s", path);
 			free(completed);
@@ -1049,6 +1157,21 @@ static void config_load(void)
 		case _environment_set_is_false:
 			config_values[index].boolean = 0;
 			break;
+		}
+	}
+	/* the old HALO_VR_SNAP_TURN, unless the new variables are set: degrees, 0 for smooth */
+	if ((CONFIG_PLATFORM & _platform_vr) && getenv("HALO_VR_SNAP_TURN") && !getenv("HALO_VR_TURN_MODE") &&
+		!getenv("HALO_VR_SNAP_ANGLE"))
+	{
+		double degrees = strtod(getenv("HALO_VR_SNAP_TURN"), NULL);
+
+		config_set_value("vr.turn_mode", degrees > 0.0 ? "snap" : "smooth");
+		if (degrees > 0.0)
+		{
+			char angle[16];
+
+			snprintf(angle, sizeof(angle), "%d", (int)(degrees + 0.5));
+			config_set_value("vr.snap_angle", angle);
 		}
 	}
 	config_clamp_ranges();
@@ -1111,8 +1234,9 @@ static int config_line_section(const char *line, const char *end, char *section,
 
 /* `input` (a config file's text) with the setting `name`'s line made
 "key = written_value": that line replaced, or added at the end of its section
-(or of a section made for it), the rest as it is. A new string, NULL when
-memory runs out */
+(or of a section made for it), the rest as it is. With a NULL written_value
+the line is instead commented out (and none is added when it is missing). A
+new string, NULL when memory runs out */
 static char *config_edit_text(const char *input, const char *name, const char *written_value)
 {
 	const char *dot = strchr(name, '.');
@@ -1125,7 +1249,7 @@ static char *config_edit_text(const char *input, const char *name, const char *w
 		return NULL;
 	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
 	snprintf(key, sizeof(key), "%s", dot + 1);
-	snprintf(line_text, sizeof(line_text), "%s = %s\n", key, written_value);
+	snprintf(line_text, sizeof(line_text), "%s = %s\n", key, written_value ? written_value : "");
 	for (line = input; *line;)
 	{
 		const char *end = line + strcspn(line, "\n");
@@ -1134,7 +1258,7 @@ static char *config_edit_text(const char *input, const char *name, const char *w
 		if (config_line_section(line, end, current, sizeof(current)))
 		{
 			/* (leaving the section without the key: it goes at its end) */
-			if (in_section && !written)
+			if (in_section && !written && written_value)
 			{
 				config_append(&out, line_text);
 				written = 1;
@@ -1143,7 +1267,20 @@ static char *config_edit_text(const char *input, const char *name, const char *w
 		}
 		else if (in_section && !written && config_line_key(line, end, key))
 		{
-			config_append(&out, line_text);
+			if (written_value)
+			{
+				config_append(&out, line_text);
+			}
+			else
+			{
+				/* (kept, as a comment, for the player to see what it was) */
+				char *copy = config_copy(line, (size_t)(next - line));
+
+				config_append(&out, "# ");
+				if (copy)
+					config_append(&out, copy);
+				free(copy);
+			}
 			written = 1;
 			line = next;
 			continue;
@@ -1159,7 +1296,7 @@ static char *config_edit_text(const char *input, const char *name, const char *w
 		}
 		line = next;
 	}
-	if (!written)
+	if (!written && written_value)
 	{
 		if (out.length && out.buffer[out.length - 1] != '\n')
 			config_append(&out, "\n");
@@ -1217,6 +1354,14 @@ int config_write_real(const char *name, double value)
 	if (!strpbrk(text, ".eEn"))
 		strcat(text, ".0");
 	return config_write(name, _config_real, text, text);
+}
+
+int config_write_integer(const char *name, long value)
+{
+	char text[32];
+
+	snprintf(text, sizeof(text), "%ld", value);
+	return config_write(name, _config_integer, text, text);
 }
 
 int config_write_string(const char *name, const char *value)

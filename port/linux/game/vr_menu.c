@@ -125,6 +125,8 @@ enum
 	_vr_setting_boolean,
 	_vr_setting_real,
 	_vr_setting_string,
+	/* turning: vr.turn_mode and vr.snap_angle together, a value each */
+	_vr_setting_turning,
 	/* not a setting: quits the game, after a second press of A */
 	_vr_setting_quit,
 };
@@ -136,14 +138,16 @@ static struct vr_menu_setting
 	struct
 	{
 		char const *label, *value;
-	} values[3];
+	} values[4];
 } const vr_menu_settings[] =
 {
 	/* the left box */
 	{ "CONTROLS", "vr.controls", _vr_setting_string, 2, { { "VR", "vr" }, { "XBOX", "pad" } } },
 	{ "AIM", "vr.aim", _vr_setting_string, 2, { { "HAND", "hand" }, { "HEAD", "head" } } },
 	{ "GUN HAND", "vr.left_handed", _vr_setting_boolean, 2, { { "RIGHT", "false" }, { "LEFT", "true" } } },
-	{ "TURNING", "vr.snap_turn", _vr_setting_real, 3, { { "SNAP 30", "30" }, { "SNAP 45", "45" }, { "SMOOTH", "0" } } },
+	/* (turning's values are the mode, then after a comma the snap angle) */
+	{ "TURNING", "vr.turn_mode", _vr_setting_turning, 4,
+		{ { "SNAP 30", "snap,30" }, { "SNAP 45", "snap,45" }, { "SMOOTH", "smooth,0" }, { "OFF", "off,0" } } },
 	{ "ROOM-SCALE", "vr.roomscale", _vr_setting_boolean, 2, { { "OFF", "false" }, { "ON", "true" } } },
 	/* the right box */
 	{ "SCOPE", "vr.scope", _vr_setting_boolean, 2, { { "ON", "true" }, { "OFF", "false" } } },
@@ -160,6 +164,21 @@ static struct vr_menu_setting
 #define VR_MENU_SETTING_COUNT ((long)NUMBEROF(vr_menu_settings))
 /* the settings in the left box; the rest go in the right */
 #define VR_MENU_LEFT_COUNT 5
+
+/* turning's value "mode,angle" split: the mode in `mode`, the angle */
+static long vr_menu_turning_value(
+	char const *value,
+	char *mode,
+	long size)
+{
+	long length = (long)strcspn(value, ",");
+
+	if (length >= size)
+		length = size - 1;
+	memcpy(mode, value, (size_t)length);
+	mode[length] = 0;
+	return atol(value + strcspn(value, ",") + (value[strcspn(value, ",")] ? 1 : 0));
+}
 
 /* the setting's value now, as an index into its values (NONE: none of them) */
 static long vr_menu_value_index(
@@ -185,6 +204,19 @@ static long vr_menu_value_index(
 			if (!strcmp(config_string(setting->key), value))
 				return index;
 			break;
+		case _vr_setting_turning:
+		{
+			char mode[16];
+			long angle = vr_menu_turning_value(value, mode, sizeof(mode));
+
+			/* snap at that angle, or the other modes whatever the angle */
+			if (!strcmp(config_string(setting->key), mode) &&
+				(strcmp(mode, "snap") || config_integer("vr.snap_angle") == angle))
+			{
+				return index;
+			}
+			break;
+		}
 		}
 	}
 	return NONE;
@@ -551,6 +583,16 @@ boolean vr_menu_setting_change(
 	case _vr_setting_string:
 		written = config_write_string(setting->key, value);
 		break;
+	case _vr_setting_turning:
+	{
+		char mode[16];
+		long angle = vr_menu_turning_value(value, mode, sizeof(mode));
+
+		written = config_write_string(setting->key, mode);
+		if (angle > 0)
+			written = config_write_integer("vr.snap_angle", angle) && written;
+		break;
+	}
 	}
 	vr_reload_settings();
 	platform_log("vr: %s set to %s%s", setting->key, value, written ? "" : " (not saved to config.toml)");

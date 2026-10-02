@@ -24,6 +24,7 @@ int config_write_boolean(const char *name, int value);
 /* as config_write_boolean, for a real or a string (no quotes or
 backslashes in it) */
 int config_write_real(const char *name, double value);
+int config_write_integer(const char *name, long value);
 int config_write_string(const char *name, const char *value);
 
 #endif
