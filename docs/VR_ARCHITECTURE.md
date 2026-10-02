@@ -20,7 +20,8 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | VR-native controls, gestures, left-handed play | Built (`vr.controls = "vr"`, default; `"pad"` keeps the Xbox mapping). **Not yet run on the device.** |
 | Aim smoothing when zoomed, haptics | Built, **not yet run on the device.** |
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
-| Far HUD, menu laser pointer | Planned (the LivingFray-based plan's phases 5 and 6). |
+| Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
+| Menu laser pointer | Planned. |
 | Comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -105,8 +106,13 @@ texture names, which it draws into directly.
   lens-flare occlusion and fog history stay per eye.
 - **Eye resolve.** `vr_render_window_end` copies each eye's back buffer into its swapchain image.
 - **HUD pass.** It clears to transparent and draws only `interface_draw_screen`, the screen
-  flash and the UI widgets. `vr_present` shows that image head-locked with alpha
-  (`vr.hud_distance`, `vr.hud_width`).
+  flash and the UI widgets. `vr_present` shows that image head-locked with alpha, far away
+  (`vr.hud_distance` 15 m, `vr.hud_width` 10 m, about 37° across, as HaloCEVR's), so the eyes
+  needn't refocus between it and the world.
+  - It is drawn from the head's camera, with frustum bounds matching the panel's field
+    (`vr_hud_bounds`). Nav points and friends' names are projected from where the eyes are, so
+    they sit over what they mark (not where the hand points).
+  - The motion sensor turns with the head (`vr_render_motion_sensor_yaw`), as the HUD does.
 - **Once per frame** (left eye only): the sky's animation phase (`render_sky.c`), weather
   simulation, glow particles, and the first-person weapon's pose. The weapon is posed from the
   head between the eyes. The fog's screen layers are left out of the eyes.
@@ -239,7 +245,10 @@ Diagnostics:
   - `vr.diag_drive_seconds` seats you as a driver for unattended tests; spawn a vehicle first
     with `cheat_all_vehicles`.
   - Untested on the device.
-- **The HUD** is a flat panel ahead of you.
+- **The HUD** is a flat panel locked to the head. Its image is the quad swapchain (1280×960,
+  about 34 px a degree at the default size), shared with the flat screen.
+- **Existing `config.toml` files** keep the HUD's old 1.5 m / 1.4 m (the file holds every key):
+  set `vr.hud_distance = 15` and `vr.hud_width = 10` there.
 - **Comfort options** are missing: no vignette, no seated or standing height.
 - **Map loads** block the game loop. SteamVR shows its own loading state while one runs.
 - **Battery.** The Frame discharges even on the Mac's USB.

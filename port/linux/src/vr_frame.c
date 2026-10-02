@@ -1280,6 +1280,16 @@ int vr_head_view(const float position[3], const float forward[3],
 	return 1;
 }
 
+void vr_hud_bounds(float aspect, float bounds[4])
+{
+	float x = vr.hud_distance > 0.0f ? vr.hud_width * 0.5f / vr.hud_distance : 1.0f;
+
+	bounds[0] = -x / aspect;
+	bounds[1] = x / aspect;
+	bounds[2] = -x * 0.75f;
+	bounds[3] = x * 0.75f;
+}
+
 void vr_resolve_eye(int eye, unsigned int source, int width, int height)
 {
 	if ((!vr.stereo && !vr.cinema) || eye < 0 || eye > 1)

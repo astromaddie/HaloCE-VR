@@ -97,6 +97,10 @@ void halo_vr_mirror_winding(int mirrored);
 in the scope, or not at all): the first-person weapon stays in view while
 zoomed, and the HUD draws no zoom mask */
 int vr_render_unzoomed_view(void);
+/* motion_sensor_update: the yaw (radians) the first local player's motion
+sensor turns with, the head's, not the hand's aim; 0 to leave the
+facing's */
+int vr_render_motion_sensor_yaw(short local_player_index, real *yaw);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
 /* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */

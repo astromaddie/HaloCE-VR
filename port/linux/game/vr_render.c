@@ -45,6 +45,13 @@ static struct
 	/* a cutscene eye's frustum turned in, in the bounds' units */
 	real cinema_shift[2];
 	real_rectangle2d eye_bounds[2];
+	/* the HUD pass is drawn from the head (head_camera), over the panel's
+	field */
+	boolean hud_from_head;
+	real_rectangle2d hud_bounds;
+	/* the head's yaw (radians), for the motion sensor */
+	boolean head_yaw_valid;
+	real head_yaw;
 	/* the scope's pass this frame: its sight (VR_SCOPE_*, 0 none), field and
 	viewport */
 	int scope_shape;
@@ -428,12 +435,9 @@ short vr_render_windows(
 		eye_camera(eye, &windows[eye].rasterizer_camera, &vr_render.eye_bounds[eye]);
 		windows[eye].render_camera = windows[eye].rasterizer_camera;
 	}
-	/* the HUD keeps the game's camera: its reticle and markers line up
-	with the view ahead */
-	windows[2] = player;
-	windows[3] = console;
 	view_anchor(&player.render_camera, &vr_render.game_camera_position);
 	vr_render.head_camera = player.render_camera;
+	vr_render.hud_from_head = FALSE;
 	{
 		real_point3d position;
 		real_vector3d forward, up;
@@ -443,10 +447,36 @@ short vr_render_windows(
 		view_heading(&player.render_camera, &heading);
 		if (vr_head_view(vr_render.game_camera_position.n, heading.n, position.n, forward.n, up.n))
 		{
+			real horizontal = (real)sqrt(forward.i * forward.i + forward.j * forward.j);
+
 			vr_render.head_camera.position = position;
 			vr_render.head_camera.forward = forward;
 			vr_render.head_camera.up = up;
+			vr_render.hud_from_head = TRUE;
+			/* (looking straight up or down, the last yaw holds) */
+			if (horizontal > 0.2f)
+			{
+				vr_render.head_yaw = vr_yaw(&forward);
+				vr_render.head_yaw_valid = TRUE;
+			}
 		}
+	}
+	/* the HUD, drawn from the head over its head-locked panel's field: its
+	markers (nav points, friends' names) land on what they mark, and with
+	the head aiming its crosshair is where the head looks */
+	windows[2] = player;
+	windows[3] = console;
+	if (vr_render.hud_from_head)
+	{
+		struct render_camera *camera = &windows[2].rasterizer_camera;
+
+		camera->position = vr_render.head_camera.position;
+		camera->forward = vr_render.head_camera.forward;
+		camera->up = vr_render.head_camera.up;
+		camera->vertical_field_of_view = _pi * 0.5f;
+		windows[2].render_camera = *camera;
+		vr_hud_bounds((real)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0) /
+			(real)(camera->viewport_bounds.y1 - camera->viewport_bounds.y0), vr_render.hud_bounds.n);
 	}
 	/* the hand's reticle, where its aim meets the world */
 	if (vr_hand_aiming())
@@ -478,13 +508,18 @@ short vr_render_windows(
 	vr_render.eye_of_window[1] = 1;
 	/* zoomed: the scope's view before the HUD (window 2, within
 	MAXIMUM_WINDOWS for the rasterizer's per-window state) */
-	if (scope_window(&windows[2], &player))
 	{
-		windows[3] = player;
-		windows[4] = console;
-		vr_render.pass_of_window[2] = _vr_render_pass_scope;
-		vr_render.pass_of_window[3] = _vr_render_pass_hud;
-		return 5;
+		struct render_window scope;
+
+		if (scope_window(&scope, &player))
+		{
+			windows[3] = windows[2];
+			windows[4] = console;
+			windows[2] = scope;
+			vr_render.pass_of_window[2] = _vr_render_pass_scope;
+			vr_render.pass_of_window[3] = _vr_render_pass_hud;
+			return 5;
+		}
 	}
 	return 4;
 }
@@ -525,6 +560,10 @@ void vr_render_frustum_bounds(
 	{
 		*bounds = vr_render.scope_bounds;
 	}
+	else if (VR_RENDER_HUD() && vr_render.hud_from_head)
+	{
+		*bounds = vr_render.hud_bounds;
+	}
 	else if (vr_render_pass == _vr_render_pass_cinema_left_eye || vr_render_pass == _vr_render_pass_cinema_right_eye)
 	{
 		real shift = vr_render.cinema_shift[vr_render_pass == _vr_render_pass_cinema_right_eye];
@@ -532,6 +571,16 @@ void vr_render_frustum_bounds(
 		bounds->x0 += shift;
 		bounds->x1 += shift;
 	}
+}
+
+int vr_render_motion_sensor_yaw(
+	short local_player_index,
+	real *yaw)
+{
+	if (local_player_index != local_player_get_next(NONE) || !vr_aiming() || !vr_render.head_yaw_valid)
+		return FALSE;
+	*yaw = vr_render.head_yaw;
+	return TRUE;
 }
 
 int vr_render_unzoomed_view(

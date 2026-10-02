@@ -269,10 +269,12 @@ static const struct config_setting config_settings[] =
 		"Game units per metre of head movement and eye separation: the game's\n"
 		"unit is 10 feet (0.328084 per metre). Larger makes the world feel\n"
 		"smaller." },
-	{ "vr.hud_distance", _config_real, "1.5", "HALO_VR_HUD_DISTANCE", _environment_value, _platform_vr,
-		"How far ahead of the eyes the HUD floats, in metres." },
-	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
-		"The HUD's width, in metres (its height is three quarters)." },
+	{ "vr.hud_distance", _config_real, "15.0", "HALO_VR_HUD_DISTANCE", _environment_value, _platform_vr,
+		"How far ahead of the eyes the HUD floats, in metres: far, so the eyes\n"
+		"need not refocus between it and the world." },
+	{ "vr.hud_width", _config_real, "10.0", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
+		"The HUD's width, in metres (its height is three quarters); with\n"
+		"vr.hud_distance, how much of the view it spans (10 at 15: 37 degrees)." },
 	{ "vr.refresh_rate", _config_real, "90.0", "HALO_VR_REFRESH_RATE", _environment_value, _platform_vr,
 		"The headset's display rate to ask for, in hertz: the highest the\n"
 		"runtime offers at or below it; 0 leaves the runtime's choice. SteamVR on\n"

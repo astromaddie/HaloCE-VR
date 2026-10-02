@@ -50,6 +50,11 @@ int vr_eye_view(int eye, const float position[3], const float forward[3], float 
 /* the head between the eyes, as vr_eye_view gives an eye */
 int vr_head_view(const float position[3], const float forward[3],
 	float out_position[3], float out_forward[3], float out_up[3]);
+/* the frustum bounds of the HUD's head-locked panel (vr.hud_distance,
+vr.hud_width) seen from the head, as vr_eye_view gives an eye's: the HUD
+pass drawn from the head with them places its markers over what they
+mark */
+void vr_hud_bounds(float aspect, float bounds[4]);
 /* copies the eye drawn into framebuffer `source` (width x height, row 0
 at the top) into the eye's image */
 void vr_resolve_eye(int eye, unsigned int source, int width, int height);
