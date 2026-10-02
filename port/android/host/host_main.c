@@ -96,6 +96,10 @@ void host_android_path(int which, char *buffer, uint32_t size)
 	snprintf(buffer, size, "%s", which ? save_root : data_root);
 }
 
+#ifdef HALO_VR
+#define SHARED_DATA_ROOT "/sdcard/Documents/HaloCE"
+#endif
+
 static int directory_has_maps(const char *root)
 {
 	char path[600];
@@ -248,7 +252,15 @@ static void *game_main(void *unused)
 	if (!external)
 		host_fatal("Android storage is unavailable: %s", SDL_GetError());
 	snprintf(data_root, sizeof(data_root), "%s", external);
-	snprintf(save_root, sizeof(save_root), "%s/save", external);
+#ifdef HALO_VR
+	/* The Steam Frame runs Android in a container (Lepton) that can be
+	reset, taking the app's own storage with it; its Documents folder is
+	the headset's, which stays. Game data put there is preferred, with the
+	saves and settings beside it. */
+	if (directory_has_maps(SHARED_DATA_ROOT))
+		snprintf(data_root, sizeof(data_root), "%s", SHARED_DATA_ROOT);
+#endif
+	snprintf(save_root, sizeof(save_root), "%s/save", data_root);
 	/* readable by adb (the shell user), for managing saves */
 	mkdir(save_root, 0775);
 	share_save_tree(save_root);
