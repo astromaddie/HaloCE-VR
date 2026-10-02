@@ -4,17 +4,19 @@ This fork adds a VR build of the Android port for the Steam Frame. The headset r
 apps inside Lepton, a container, and the build uses OpenXR to talk to SteamVR. Desktop and phone
 builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 
-## Status
+## Status (2026-10-02)
 
-| Milestone | State |
+| Area | State |
 | --- | --- |
-| M0: macOS build, stock APK in Lepton | Done. The APK builds on Apple Silicon and installs in Lepton. Running the game needs the game data. |
-| M1: OpenXR session | Verified unattended: IDLE → READY → SYNCHRONIZED, 72 frames/s, Frame controller profile bound. **Not yet checked in the headset** (FOCUSED, eye colours). |
-| M2: the game on a flat screen in the headset | Code done. The frame protocol is paced by OpenXR. Waits on the game data and a headset check. |
-| M3: stereo gameplay with a HUD layer | Code done, untested. Diagnostics: `vr.force_render`, `vr.diag_yaw`, `vr.dump_frame`. |
-| M4: head aiming, snap/smooth turn, recentre | Code done, untested. |
-| M5: hand-aimed weapons | Code done, untested, off by default (`vr.aim = "hand"`). |
-| M6: scope, settings, comfort, foveation | Not started. |
+| Build, deploy, OpenXR session | Done; played in the headset. |
+| Menus and loading on a flat screen | Done; played. |
+| Stereo gameplay with a HUD layer | Done; played. The HUD's alpha is made from its brightness. |
+| Performance | **72 Hz held at 1.5× resolution (2592² an eye)**, played. Fixed: lens-flare occlusion reads that stalled the CPU on the GPU (now asynchronous), Mesa's trace markers, per-draw buffer maps (now persistently mapped). The game thread is busy 53% of a 72 Hz frame. |
+| 90 Hz | Default (`vr.refresh_rate`), falls back to 72 if not held for 20 s while worn. **Not yet seen worn.** |
+| Hand-aimed weapons | Default (`vr.aim = "hand"`); verified unattended with synthetic hands. **Not yet played.** |
+| Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
+| 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
+| Scope, comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
 
@@ -114,9 +116,26 @@ texture names, which it draws into directly.
 controllers map one-to-one onto it (A/B/X/Y, bumpers as white/black, d-pad, view/menu as
 back/start). While the head aims, the right stick is consumed for turning.
 
+## Measuring without wearing the headset
+
+- `vr.force_render` renders stereo with the headset in standby. It uses a synthetic head and
+  hands: the head is turned by `vr.diag_yaw`, the right hand by `vr.diag_hand_yaw`.
+- `vr.dump_frame` and `vr.dump_cinema_frame` write the eyes and HUD of a gameplay or cutscene
+  frame. A dump logs the aim state (seated or on foot, hand or head, yaws).
+- `vr.timing` logs where a frame's time goes (`[vr-frame]`); `vr.timing_gpu` waits for the GPU
+  to time it separately.
+- `debug.telnet_console` opens a script console on 127.0.0.1:2323. Reach it with
+  `adb forward tcp:2323 tcp:2323`. Useful commands: `map_name levels\a30\a30` loads a level,
+  and `cinematic_skip_start_internal` / `cinematic_skip_stop_internal` skip its intro.
+- `simpleperf` from the NDK runs in Lepton (`adb push` it to `/data/local/tmp`) and profiles the
+  game thread. Threads' CPU time: `/proc/<pid>/task/*/stat`.
+- Large copies over SSH time out while the game runs; use `adb pull`.
+
 ## Settings (`config.toml`, `[vr]`)
 
-`enabled`, `stereo`, `resolution_scale` (0.8), `world_scale` (0.328084 units/m),
+`enabled`, `stereo`, `resolution_scale` (1.5), `refresh_rate` (90), `world_scale` (0.328084 units/m),
+`cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
+("ik" / "hidden" / "animated"),
 `screen_distance`, `screen_width`, `hud_distance`, `hud_width`, `aim` ("head"/"hand"),
 `weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`.
 
@@ -127,13 +146,13 @@ Diagnostics:
 
 `tools/steam_frame/deploy.sh --config vr.KEY=VALUE` edits these on the headset.
 
-## Known gaps
+## Known gaps and next steps
 
-- Nothing is verified in the headset yet beyond the OpenXR frame loop.
-- The HUD's alpha: the HUD blends into a transparent target. Its alpha may come out too faint.
-  Check `vr-hud.bmp` and its logged transparency.
-- Vehicles: their third-person chase camera sits behind the head-aimed facing, so it swings
-  with the head. Driving comfort is unknown.
-- Scope zoom is ignored in stereo; the scope's own screen effect still draws on the HUD layer.
-- Saves made before data moved to `Documents/HaloCE` stay in the app folder.
-- A map load blocks the loop with no OpenXR frames, so SteamVR shows its own loading state.
+- **Two-handed aiming.** With the left hand on the foregrip, the left arm snaps to the gun, but
+  the gun's angle still comes from the right controller alone.
+- **Scope zoom.** It is ignored in stereo. A picture-in-picture scope would bring it back.
+- **Vehicles.** The game's chase camera is used with your head's rotation. Comfort is untested.
+- **The HUD** is a flat panel ahead of you.
+- **Comfort options** are missing: no vignette, no seated or standing height.
+- **Map loads** block the game loop. SteamVR shows its own loading state while one runs.
+- **Battery.** The Frame discharges even on the Mac's USB.
