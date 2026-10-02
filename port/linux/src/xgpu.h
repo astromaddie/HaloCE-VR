@@ -36,6 +36,8 @@ int host_gl_has_extension(const char *name);
 unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset);
 void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
+int host_gl_buffer_persist(unsigned int target, unsigned int size);
+int host_gl_buffer_write_persistent(unsigned int buffer, unsigned int offset, unsigned int size, const void *data);
 void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
 int host_gl_frame_done(unsigned int slot);

@@ -46,6 +46,8 @@ host_gl_has_extension
 host_gl_read_buffer_word
 host_gl_read_buffer
 host_gl_buffer_write
+host_gl_buffer_persist
+host_gl_buffer_write_persistent
 host_gl_fence_frame
 host_gl_wait_frame
 host_gl_frame_done

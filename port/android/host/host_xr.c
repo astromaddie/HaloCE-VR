@@ -32,6 +32,7 @@ and position when the session gains focus or the guest asks
 #include <openxr/openxr_platform.h>
 
 #define FRAME_CONTROLLER_EXTENSION "XR_VALVE_frame_controller_interaction"
+#define REFRESH_RATE_EXTENSION "XR_FB_display_refresh_rate"
 
 struct swapchain
 {
@@ -76,7 +77,7 @@ static struct
 	XrSystemId system;
 	XrSession session;
 	XrSessionState state;
-	int running, focused, exiting, frame_controller;
+	int running, focused, exiting, frame_controller, refresh_rate_extension;
 	XrSpace local, view;
 	XrSpace grip[2], aim[2];
 	XrActionSet action_set;
@@ -96,6 +97,9 @@ static struct
 	jobject activity;
 	/* statistics */
 	long long frames, frames_rendered;
+	/* the refresh rate asked for, and windows in a row it was not held */
+	float refresh_rate;
+	int refresh_misses;
 	struct timespec stats_start;
 } xr;
 
@@ -571,7 +575,7 @@ static int create_instance(struct halo_xr_info *out)
 	XrSystemGetInfo system_info = { XR_TYPE_SYSTEM_GET_INFO };
 	XrSystemProperties system = { XR_TYPE_SYSTEM_PROPERTIES };
 	XrExtensionProperties available[128];
-	const char *extensions[3];
+	const char *extensions[4];
 	uint32_t count = 0, index;
 
 	for (index = 0; index < sizeof(available) / sizeof(available[0]); index++)
@@ -585,10 +589,16 @@ static int create_instance(struct halo_xr_info *out)
 		host_logf(HOST_LOG_INFO, "[openxr] extension %s", available[index].extensionName);
 		if (!strcmp(available[index].extensionName, FRAME_CONTROLLER_EXTENSION))
 			xr.frame_controller = 1;
+		if (!strcmp(available[index].extensionName, REFRESH_RATE_EXTENSION))
+			xr.refresh_rate_extension = 1;
 	}
-	extensions[0] = XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME;
-	extensions[1] = XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME;
-	extensions[2] = FRAME_CONTROLLER_EXTENSION;
+	count = 0;
+	extensions[count++] = XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME;
+	extensions[count++] = XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME;
+	if (xr.frame_controller)
+		extensions[count++] = FRAME_CONTROLLER_EXTENSION;
+	if (xr.refresh_rate_extension)
+		extensions[count++] = REFRESH_RATE_EXTENSION;
 	android.applicationVM = xr.vm;
 	android.applicationActivity = xr.activity;
 	info.next = &android;
@@ -596,7 +606,7 @@ static int create_instance(struct halo_xr_info *out)
 	info.applicationInfo.applicationVersion = 1;
 	strncpy(info.applicationInfo.engineName, "halo-ce-universal", XR_MAX_ENGINE_NAME_SIZE - 1);
 	info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-	info.enabledExtensionCount = xr.frame_controller ? 3 : 2;
+	info.enabledExtensionCount = count;
 	info.enabledExtensionNames = extensions;
 	if (!check(xrCreateInstance(&info, &xr.instance), "xrCreateInstance"))
 		return 0;
@@ -710,7 +720,8 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 			return -1;
 	}
 	if (!create_swapchain(HALO_XR_SWAPCHAIN_QUAD, quad_width, quad_height) ||
-		!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64))
+		!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64) ||
+		!create_swapchain(HALO_XR_SWAPCHAIN_FADE, 16, 16))
 	{
 		return -1;
 	}
@@ -787,6 +798,8 @@ static void poll_events(void)
 	}
 }
 
+float host_xr_set_refresh_rate(float hertz);
+
 static void log_statistics(void)
 {
 	struct timespec now;
@@ -799,6 +812,25 @@ static void log_statistics(void)
 	host_logf(HOST_LOG_INFO, "[vr-perf] %.1f frames/s (%lld rendered) over %.1f s, period %.3f ms, state %s",
 		xr.frames / seconds, xr.frames_rendered, seconds, xr.frame_state.predictedDisplayPeriod * 1e-6,
 		state_name(xr.state));
+	/* A rate above 72 that the game does not hold while worn (focused) is
+	worse than 72 held: after two windows of ten seconds short of 90% of
+	it, fall back */
+	if (xr.refresh_rate > 72.5f && xr.focused && xr.frames_rendered > 0)
+	{
+		if (xr.frames / seconds < xr.refresh_rate * 0.9f)
+		{
+			if (++xr.refresh_misses >= 2)
+			{
+				host_logf(HOST_LOG_WARN, "[openxr] %.0f Hz not held (%.1f frames/s): back to 72 Hz",
+					xr.refresh_rate, xr.frames / seconds);
+				host_xr_set_refresh_rate(72.0f);
+			}
+		}
+		else
+		{
+			xr.refresh_misses = 0;
+		}
+	}
 	xr.frames = xr.frames_rendered = 0;
 	xr.stats_start = now;
 }
@@ -928,7 +960,9 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	XrCompositionLayerProjection projection = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad reticle = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *list[3];
+	XrCompositionLayerQuad screen[2] = { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
+	XrCompositionLayerQuad fade = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	const XrCompositionLayerBaseHeader *list[6];
 	XrFrameEndInfo end = { XR_TYPE_FRAME_END_INFO };
 	uint32_t count = 0;
 	int which;
@@ -955,6 +989,26 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		projection.viewCount = 2;
 		projection.views = views;
 		list[count++] = (const XrCompositionLayerBaseHeader *)&projection;
+	}
+	/* a 3D screen: each eye sees its own image on the same quad */
+	if (layers && (layers->flags & HALO_XR_LAYER_STEREO_SCREEN) && xr.frame_state.shouldRender)
+	{
+		int eye;
+
+		for (eye = 0; eye < 2; eye++)
+		{
+			const struct swapchain *swapchain = &xr.swapchains[eye];
+
+			screen[eye].eyeVisibility = eye ? XR_EYE_VISIBILITY_RIGHT : XR_EYE_VISIBILITY_LEFT;
+			screen[eye].subImage.swapchain = swapchain->handle;
+			screen[eye].subImage.imageRect.extent.width = (int32_t)swapchain->width;
+			screen[eye].subImage.imageRect.extent.height = (int32_t)swapchain->height;
+			screen[eye].size.width = layers->quad_size[0];
+			screen[eye].size.height = layers->quad_size[1];
+			screen[eye].space = xr.local;
+			local_pose(&layers->quad_pose, &screen[eye].pose);
+			list[count++] = (const XrCompositionLayerBaseHeader *)&screen[eye];
+		}
 	}
 	/* the reticle sits in the world, under the HUD */
 	if (layers && (layers->flags & HALO_XR_LAYER_RETICLE) && xr.frame_state.shouldRender)
@@ -997,6 +1051,23 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		}
 		list[count++] = (const XrCompositionLayerBaseHeader *)&quad;
 	}
+	/* a fade to black over everything: a quad just ahead of the eyes,
+	wider than they see */
+	if (layers && (layers->flags & HALO_XR_LAYER_FADE) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_FADE];
+
+		fade.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		fade.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		fade.subImage.swapchain = swapchain->handle;
+		fade.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		fade.subImage.imageRect.extent.height = (int32_t)swapchain->height;
+		fade.size.width = fade.size.height = 2.0f;
+		fade.space = xr.view;
+		fade.pose.orientation.w = 1.0f;
+		fade.pose.position.z = -0.25f;
+		list[count++] = (const XrCompositionLayerBaseHeader *)&fade;
+	}
 	if (count)
 		xr.frames_rendered++;
 	end.displayTime = xr.frame_state.predictedDisplayTime;
@@ -1005,6 +1076,37 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	end.layers = list;
 	check(xrEndFrame(xr.session, &end), "xrEndFrame");
 	xr.frame_begun = 0;
+}
+
+/* asks the runtime for a display refresh rate (XR_FB_display_refresh_rate):
+the nearest it offers at or below `hertz`; returns the rate asked for, or 0
+when the runtime cannot change it */
+float host_xr_set_refresh_rate(float hertz)
+{
+	PFN_xrEnumerateDisplayRefreshRatesFB enumerate = NULL;
+	PFN_xrRequestDisplayRefreshRateFB request = NULL;
+	float rates[16], chosen = 0.0f;
+	uint32_t count = 0, index;
+
+	if (!xr.initialized || !xr.refresh_rate_extension ||
+		XR_FAILED(xrGetInstanceProcAddr(xr.instance, "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction *)&enumerate)) ||
+		XR_FAILED(xrGetInstanceProcAddr(xr.instance, "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction *)&request)) ||
+		!check(enumerate(xr.session, 16, &count, rates), "xrEnumerateDisplayRefreshRatesFB"))
+	{
+		return 0.0f;
+	}
+	for (index = 0; index < count; index++)
+	{
+		host_logf(HOST_LOG_INFO, "[openxr] display refresh rate %.1f Hz offered", rates[index]);
+		if (rates[index] <= hertz + 0.5f && rates[index] > chosen)
+			chosen = rates[index];
+	}
+	if (chosen <= 0.0f || !check(request(xr.session, chosen), "xrRequestDisplayRefreshRateFB"))
+		return 0.0f;
+	host_logf(HOST_LOG_INFO, "[openxr] display refresh rate %.1f Hz asked for", chosen);
+	xr.refresh_rate = chosen;
+	xr.refresh_misses = 0;
+	return chosen;
 }
 
 void host_xr_recenter(void)

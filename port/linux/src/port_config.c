@@ -273,6 +273,23 @@ static const struct config_setting config_settings[] =
 		"How far ahead of the eyes the HUD floats, in metres." },
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
+	{ "vr.refresh_rate", _config_real, "90.0", "HALO_VR_REFRESH_RATE", _environment_value, _platform_vr,
+		"The headset's display rate to ask for, in hertz (the Steam Frame offers\n"
+		"72 and 90); 0 leaves the runtime's choice. A rate above 72 that the\n"
+		"game does not hold for 20 seconds while worn falls back to 72." },
+	{ "vr.cinema_3d", _config_boolean, "true", "HALO_VR_CINEMA_3D", _environment_value, _platform_vr,
+		"Show cutscenes in 3D on a large screen ahead (each eye its own\n"
+		"picture); false shows them flat." },
+	{ "vr.cinema_separation", _config_real, "0.064", "HALO_VR_CINEMA_SEPARATION", _environment_value, _platform_vr,
+		"The cutscene screen's eye separation, in metres of the game's world:\n"
+		"more for deeper 3D." },
+	{ "vr.cinema_convergence", _config_real, "2.0", "HALO_VR_CINEMA_CONVERGENCE", _environment_value, _platform_vr,
+		"How far from the cutscene's camera, in game units (10 feet), things\n"
+		"show at the screen's depth; nearer comes out of it." },
+	{ "vr.cinema_distance", _config_real, "3.0", "HALO_VR_CINEMA_DISTANCE", _environment_value, _platform_vr,
+		"How far ahead the cutscene screen floats, in metres." },
+	{ "vr.cinema_width", _config_real, "3.6", "HALO_VR_CINEMA_WIDTH", _environment_value, _platform_vr,
+		"The cutscene screen's width, in metres." },
 	{ "vr.aim", _config_string, "\"hand\"", "HALO_VR_AIM", _environment_value, _platform_vr,
 		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
 		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"

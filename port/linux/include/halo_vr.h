@@ -27,6 +27,10 @@ enum
 	_vr_render_pass_left_eye,
 	_vr_render_pass_right_eye,
 	_vr_render_pass_hud,
+	/* a cutscene's eyes, for the 3D screen (each followed by the console
+	window's letterbox, then resolved) */
+	_vr_render_pass_cinema_left_eye,
+	_vr_render_pass_cinema_right_eye,
 };
 
 /* which pass the window being rendered is */
@@ -35,11 +39,13 @@ extern int vr_render_pass;
 #define VR_RENDER_EYE() (vr_render_pass == _vr_render_pass_left_eye || vr_render_pass == _vr_render_pass_right_eye)
 #define VR_RENDER_HUD() (vr_render_pass == _vr_render_pass_hud)
 /* the passes after the first, which must not advance per-frame state */
-#define VR_RENDER_REPEAT() (vr_render_pass > _vr_render_pass_left_eye)
+#define VR_RENDER_REPEAT() (vr_render_pass == _vr_render_pass_right_eye || \
+	vr_render_pass == _vr_render_pass_hud || vr_render_pass == _vr_render_pass_cinema_right_eye)
 
 /* main_game_render: makes a single player window (followed by the console
 window) into the eyes, the HUD and the console window when this frame is
-drawn in stereo; returns the window count to render */
+drawn in stereo, or a cutscene's into each eye's view and console window;
+returns the window count to render */
 short vr_render_windows(struct render_window *windows, short window_count);
 /* render_frame, around each window */
 void vr_render_window_begin(short window_index);

@@ -40,6 +40,15 @@ static struct
 	int stereo_enabled;
 	/* world units per metre (vr.world_scale) */
 	float units_per_metre;
+	/* cutscenes as a 3D screen (vr.cinema_*): this frame is one */
+	int cinema, cinema_enabled;
+	float cinema_separation, cinema_convergence, cinema_distance, cinema_width;
+	/* what the last frame showed (VR_MODE_*); the screen's place, set where
+	the head faced on entering a mode that shows one; the fade from black
+	after a change of mode (1 black, 0 none) */
+	int mode;
+	struct halo_xr_pose screen_pose;
+	float fade;
 	/* this frame is drawn in stereo; which eyes are in their images */
 	int stereo;
 	unsigned int eyes_resolved;
@@ -116,6 +125,12 @@ void vr_initialize(void)
 	vr.hud_distance = (float)config_real("vr.hud_distance");
 	vr.hud_width = (float)config_real("vr.hud_width");
 	vr.stereo_enabled = config_boolean("vr.stereo");
+	vr.cinema_enabled = config_boolean("vr.cinema_3d");
+	vr.cinema_separation = (float)config_real("vr.cinema_separation");
+	vr.cinema_convergence = (float)config_real("vr.cinema_convergence");
+	vr.cinema_distance = (float)config_real("vr.cinema_distance");
+	vr.cinema_width = (float)config_real("vr.cinema_width");
+	vr.mode = -1;
 	vr.units_per_metre = (float)config_real("vr.world_scale");
 	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
 	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
@@ -134,6 +149,12 @@ void vr_initialize(void)
 		vr.units_per_metre = 1.0f / 3.048f;
 	platform_log("vr: drawing %dx%d per eye; GL_EXT_sRGB_write_control %s", vr.eye_size, vr.eye_size,
 		vr.srgb_write_control ? "present" : "absent");
+	{
+		double hertz = config_real("vr.refresh_rate");
+
+		if (hertz > 0.0)
+			platform_log("vr: display at %.0f Hz", host_xr_set_refresh_rate((float)hertz));
+	}
 	vr.active = 1;
 	platform_log("vr: %s on %s, eyes %ux%u, %u images", vr.info.runtime, vr.info.system,
 		vr.info.width[0], vr.info.height[0], vr.info.image_count[0]);
@@ -281,7 +302,7 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	/* vr.dump_frame: the stereo frame's images, as they are shown */
-	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame && which < 3)
+	if ((vr.stereo || vr.cinema) && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame && which < 3)
 		dump_image(which, index, names[which]);
 	host_xr_release(which);
 	return 1;
@@ -341,6 +362,30 @@ int vr_stereo_begin(void)
 		synthesize_views();
 	vr.stereo = vr.stereo_enabled && (vr.frame.flags & needed) == needed;
 	return vr.stereo;
+}
+
+int vr_cinema_begin(void)
+{
+	if (!vr.active || !frame_begin())
+		return 0;
+	if (vr.force_render && !(vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER))
+		synthesize_views();
+	vr.cinema = vr.cinema_enabled && (vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER);
+	return vr.cinema;
+}
+
+int vr_cinema_eye(int eye, float *offset_units, float *convergence_tangent)
+{
+	float half = vr.cinema_separation * 0.5f * vr.units_per_metre;
+
+	if (!vr.cinema || eye < 0 || eye > 1)
+		return 0;
+	/* the left eye left of the camera (negative along its right) */
+	*offset_units = eye ? half : -half;
+	/* each eye's frustum turned in to meet the other's at the convergence
+	distance, which then shows at the screen's depth */
+	*convergence_tangent = vr.cinema_convergence > 0.0f ? -*offset_units / vr.cinema_convergence : 0.0f;
+	return 1;
 }
 
 /* q * v for a unit quaternion (x, y, z, w) */
@@ -708,7 +753,7 @@ int vr_head_view(const float position[3], const float forward[3],
 
 void vr_resolve_eye(int eye, unsigned int source, int width, int height)
 {
-	if (!vr.stereo || eye < 0 || eye > 1)
+	if ((!vr.stereo && !vr.cinema) || eye < 0 || eye > 1)
 		return;
 	if (copy_to_swapchain((unsigned int)eye, source, width, height))
 		vr.eyes_resolved |= 1u << eye;
@@ -874,6 +919,58 @@ static int copy_hud(GLuint texture)
 	return 1;
 }
 
+enum
+{
+	VR_MODE_FLAT,
+	VR_MODE_STEREO,
+	VR_MODE_CINEMA,
+};
+
+/* seconds a change of mode takes to come in from black */
+#define VR_FADE_SECONDS 0.35f
+/* and how long it stays black before */
+#define VR_FADE_HOLD_SECONDS 0.25f
+
+/* the screen `distance` metres ahead of where the head faces, upright, at
+the head's height */
+static void place_screen(float distance)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	float forward[3], yaw;
+
+	rotate(vr.frame.head.orientation, xr_forward, forward);
+	yaw = (forward[0] * forward[0] + forward[2] * forward[2] > 1e-4f) ? atan2f(-forward[0], -forward[2]) : 0.0f;
+	vr.screen_pose.orientation[0] = 0.0f;
+	vr.screen_pose.orientation[1] = sinf(yaw * 0.5f);
+	vr.screen_pose.orientation[2] = 0.0f;
+	vr.screen_pose.orientation[3] = cosf(yaw * 0.5f);
+	vr.screen_pose.position[0] = vr.frame.head.position[0] - sinf(yaw) * distance;
+	vr.screen_pose.position[1] = vr.frame.head.position[1];
+	vr.screen_pose.position[2] = vr.frame.head.position[2] - cosf(yaw) * distance;
+}
+
+/* the fade layer's image: black, `amount` opaque (premultiplied) */
+static void draw_fade(float amount)
+{
+	int index = host_xr_acquire(HALO_XR_SWAPCHAIN_FADE);
+
+	if (index < 0)
+		return;
+	if (amount > 1.0f)
+		amount = 1.0f;
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+		vr.info.images[HALO_XR_SWAPCHAIN_FADE][index], 0);
+	glViewport(0, 0, (GLsizei)vr.info.width[HALO_XR_SWAPCHAIN_FADE], (GLsizei)vr.info.height[HALO_XR_SWAPCHAIN_FADE]);
+	glDisable(GL_SCISSOR_TEST);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glClearColor(0.0f, 0.0f, 0.0f, amount);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	host_xr_release(HALO_XR_SWAPCHAIN_FADE);
+}
+
 void vr_present(unsigned int source, unsigned int texture, int width, int height)
 {
 	struct halo_xr_layers layers;
@@ -895,7 +992,37 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		start = now_ms();
 	}
 	memset(&layers, 0, sizeof(layers));
-	if (vr.stereo)
+	{
+		int mode = vr.stereo ? VR_MODE_STEREO : vr.cinema ? VR_MODE_CINEMA : VR_MODE_FLAT;
+
+		/* a change of what is shown comes in from black, and a screen comes
+		up where the head faces */
+		if (mode != vr.mode)
+		{
+			static const char *const names[] = { "a screen", "stereo", "a 3D screen" };
+
+			platform_log("vr: showing %s", names[mode]);
+			/* black a moment first: a level shows a few frames of play
+			before its script starts the opening cutscene, and such a
+			flash between two fades is hidden */
+			vr.fade = 1.0f + VR_FADE_HOLD_SECONDS / VR_FADE_SECONDS;
+			if (mode != VR_MODE_STEREO)
+				place_screen(mode == VR_MODE_CINEMA ? vr.cinema_distance : vr.screen_distance);
+			vr.mode = mode;
+		}
+	}
+	if (vr.cinema)
+	{
+		/* each eye's image on the same screen: a 3D picture */
+		if (vr.eyes_resolved == 3)
+		{
+			layers.flags |= HALO_XR_LAYER_STEREO_SCREEN;
+			layers.quad_pose = vr.screen_pose;
+			layers.quad_size[0] = vr.cinema_width;
+			layers.quad_size[1] = vr.cinema_width * 0.75f;
+		}
+	}
+	else if (vr.stereo)
 	{
 		/* the eyes are in their images; what is left in the back buffer is
 		the HUD on a transparent ground, which rides ahead of the head */
@@ -931,12 +1058,17 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	else if ((vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER) &&
 		copy_to_swapchain(HALO_XR_SWAPCHAIN_QUAD, source, width, height))
 	{
-		/* a screen floating ahead at eye height, opaque */
+		/* a screen floating where the head faced, opaque */
 		layers.flags = HALO_XR_LAYER_QUAD;
-		layers.quad_pose.position[2] = -vr.screen_distance;
-		layers.quad_pose.orientation[3] = 1.0f;
+		layers.quad_pose = vr.screen_pose;
 		layers.quad_size[0] = vr.screen_width;
 		layers.quad_size[1] = vr.screen_width * 0.75f;
+	}
+	if (vr.fade > 0.0f && (vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER))
+	{
+		draw_fade(vr.fade);
+		layers.flags |= HALO_XR_LAYER_FADE;
+		vr.fade -= (float)(vr.frame.predicted_display_period * 1e-9) / VR_FADE_SECONDS;
 	}
 	if (vr.timing)
 		copied = now_ms();
@@ -964,9 +1096,10 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = 0.0;
 		}
 	}
-	if (vr.stereo)
+	if (vr.stereo || vr.cinema)
 		vr.stereo_frames++;
 	vr.stereo = 0;
+	vr.cinema = 0;
 	vr.eyes_resolved = 0;
 	vr.aiming_last_frame = vr.aiming;
 	vr.aiming = 0;

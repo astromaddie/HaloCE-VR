@@ -73,7 +73,8 @@ checked on both sides below. */
 #define HALO_XR_SWAPCHAIN_RIGHT 1
 #define HALO_XR_SWAPCHAIN_QUAD 2
 #define HALO_XR_SWAPCHAIN_RETICLE 3
-#define HALO_XR_SWAPCHAIN_COUNT 4
+#define HALO_XR_SWAPCHAIN_FADE 4
+#define HALO_XR_SWAPCHAIN_COUNT 5
 #define HALO_XR_MAXIMUM_IMAGES 4
 
 struct halo_xr_pose
@@ -145,6 +146,9 @@ struct halo_xr_frame
 #define HALO_XR_LAYER_QUAD_HEAD_LOCKED 0x4u /* the quad's pose is in VIEW space, else LOCAL */
 #define HALO_XR_LAYER_QUAD_ALPHA 0x8u       /* blend the quad by its alpha, else opaque */
 #define HALO_XR_LAYER_RETICLE 0x10u         /* the reticle swapchain at reticle_pose (LOCAL), blended */
+#define HALO_XR_LAYER_STEREO_SCREEN 0x20u   /* the eye swapchains as a quad each eye sees its own of,
+                                               at quad_pose and quad_size: a 3D screen */
+#define HALO_XR_LAYER_FADE 0x40u            /* the fade swapchain over everything, head-locked */
 
 struct halo_xr_layers
 {
@@ -161,7 +165,7 @@ struct halo_xr_layers
 #define HALO_XR_ASSERT _Static_assert
 #endif
 HALO_XR_ASSERT(sizeof(struct halo_xr_pose) == 28, "halo_xr_pose layout");
-HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 256, "halo_xr_info layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 288, "halo_xr_info layout");
 HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 296, "halo_xr_frame layout");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, head) == 24, "halo_xr_frame.head");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, buttons) == 260, "halo_xr_frame.buttons");

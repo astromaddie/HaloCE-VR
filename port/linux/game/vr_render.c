@@ -26,7 +26,13 @@ int vr_render_pass = _vr_render_pass_none;
 
 static struct
 {
-	boolean stereo;
+	boolean stereo, cinema;
+	/* what each window of this frame is, and which eye's image it
+	completes (NONE: none) */
+	short pass_of_window[5];
+	short eye_of_window[5];
+	/* a cutscene eye's frustum turned in, in the bounds' units */
+	real cinema_shift[2];
 	real_rectangle2d eye_bounds[2];
 	/* the game's camera this frame, the head posed from it */
 	struct render_camera head_camera;
@@ -66,6 +72,43 @@ static void eye_camera(
 	camera->vertical_field_of_view = _pi * 0.5f;
 }
 
+/* a cutscene: each eye's view of it, then the console window (letterbox,
+titles) over it, for the 3D screen */
+static short cinema_windows(
+	struct render_window *windows)
+{
+	struct render_window player = windows[0], console = windows[1];
+	int eye;
+
+	for (eye = 0; eye < 2; eye++)
+	{
+		struct render_camera *camera;
+		real offset, convergence, aspect, tangent;
+		real_vector3d right;
+
+		windows[eye * 2] = player;
+		windows[eye * 2 + 1] = console;
+		camera = &windows[eye * 2].rasterizer_camera;
+		vr_cinema_eye(eye, &offset, &convergence);
+		cross_product3d(&camera->forward, &camera->up, &right);
+		normalize3d(&right);
+		camera->position.x += right.i * offset;
+		camera->position.y += right.j * offset;
+		camera->position.z += right.k * offset;
+		windows[eye * 2].render_camera = *camera;
+		/* render_camera_build_frustum: x spans its bounds times the
+		viewport's aspect and the field's tangent */
+		aspect = (real)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0) /
+			(real)(camera->viewport_bounds.y1 - camera->viewport_bounds.y0);
+		tangent = (real)tan(camera->vertical_field_of_view * 0.5f);
+		vr_render.cinema_shift[eye] = convergence / (aspect * tangent);
+		vr_render.pass_of_window[eye * 2] = eye ? _vr_render_pass_cinema_right_eye : _vr_render_pass_cinema_left_eye;
+		vr_render.eye_of_window[eye * 2 + 1] = (short)eye;
+	}
+	vr_render.cinema = TRUE;
+	return 4;
+}
+
 short vr_render_windows(
 	struct render_window *windows,
 	short window_count)
@@ -74,6 +117,20 @@ short vr_render_windows(
 	int eye;
 
 	vr_render.stereo = FALSE;
+	vr_render.cinema = FALSE;
+	for (eye = 0; eye < 5; eye++)
+	{
+		vr_render.pass_of_window[eye] = _vr_render_pass_none;
+		vr_render.eye_of_window[eye] = NONE;
+	}
+	if (window_count == 2 &&
+		windows[0].local_player_index != NONE &&
+		!windows[0].console_window &&
+		cinematic_in_progress() &&
+		vr_cinema_begin())
+	{
+		return cinema_windows(windows);
+	}
 	if (window_count != 2 ||
 		windows[0].local_player_index == NONE ||
 		windows[0].console_window ||
@@ -135,14 +192,19 @@ short vr_render_windows(
 		}
 	}
 	vr_render.stereo = TRUE;
+	vr_render.pass_of_window[0] = _vr_render_pass_left_eye;
+	vr_render.pass_of_window[1] = _vr_render_pass_right_eye;
+	vr_render.pass_of_window[2] = _vr_render_pass_hud;
+	vr_render.eye_of_window[0] = 0;
+	vr_render.eye_of_window[1] = 1;
 	return 4;
 }
 
 void vr_render_window_begin(
 	short window_index)
 {
-	vr_render_pass = vr_render.stereo && window_index <= _vr_render_pass_hud ?
-		window_index : _vr_render_pass_none;
+	vr_render_pass = (vr_render.stereo || vr_render.cinema) && window_index >= 0 && window_index < 5 ?
+		vr_render.pass_of_window[window_index] : _vr_render_pass_none;
 	vr_pass_mark(vr_render_pass, 0);
 }
 
@@ -150,8 +212,11 @@ void vr_render_window_end(
 	short window_index)
 {
 	vr_pass_mark(vr_render_pass, 1);
-	if (vr_render.stereo && window_index <= _vr_render_pass_right_eye)
-		halo_vr_resolve_eye(window_index);
+	if ((vr_render.stereo || vr_render.cinema) && window_index >= 0 && window_index < 5 &&
+		vr_render.eye_of_window[window_index] != NONE)
+	{
+		halo_vr_resolve_eye(vr_render.eye_of_window[window_index]);
+	}
 	vr_render_pass = _vr_render_pass_none;
 }
 
@@ -159,7 +224,16 @@ void vr_render_frustum_bounds(
 	real_rectangle2d *bounds)
 {
 	if (VR_RENDER_EYE())
+	{
 		*bounds = vr_render.eye_bounds[vr_render_pass];
+	}
+	else if (vr_render_pass == _vr_render_pass_cinema_left_eye || vr_render_pass == _vr_render_pass_cinema_right_eye)
+	{
+		real shift = vr_render.cinema_shift[vr_render_pass == _vr_render_pass_cinema_right_eye];
+
+		bounds->x0 += shift;
+		bounds->x1 += shift;
+	}
 }
 
 void vr_render_weapon_camera(

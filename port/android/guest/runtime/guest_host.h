@@ -95,6 +95,10 @@ unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset);
 void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 /* unsynchronized write into the buffer bound to target */
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
+/* storage for the buffer bound to target, mapped once for good; 1 on success */
+int host_gl_buffer_persist(unsigned int target, unsigned int size);
+/* a write into such a buffer: a copy, no GL call; 0 if it is not one */
+int host_gl_buffer_write_persistent(unsigned int buffer, unsigned int offset, unsigned int size, const void *data);
 /* fences the GPU work queued so far as that of ring slot `slot`; waits for
 the GPU to finish the work last fenced for a slot */
 void host_gl_fence_frame(unsigned int slot);
@@ -127,6 +131,9 @@ void host_xr_release(unsigned int which);
 void host_xr_end_frame(const struct halo_xr_layers *layers);
 /* the head's heading and position next frame become the origin */
 void host_xr_recenter(void);
+/* asks for the display refresh rate nearest at or below hertz; returns it,
+or 0 when the runtime cannot change it */
+float host_xr_set_refresh_rate(float hertz);
 void host_xr_haptic(unsigned int hand, float amplitude, float seconds);
 
 #endif

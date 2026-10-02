@@ -53,6 +53,14 @@ int vr_head_view(const float position[3], const float forward[3],
 /* copies the eye drawn into framebuffer `source` (width x height, row 0
 at the top) into the eye's image */
 void vr_resolve_eye(int eye, unsigned int source, int width, int height);
+/* cutscenes (vr.cinema_3d): begins the runtime's frame and says whether
+this one is drawn as a 3D screen, each eye's image from the game's camera
+moved aside by half the eye separation */
+int vr_cinema_begin(void);
+/* eye 0 or 1 of a cutscene frame: how far to move the camera along its
+right (world units) and how far to turn its frustum toward the other eye
+(a tangent); 0 outside one */
+int vr_cinema_eye(int eye, float *offset_units, float *convergence_tangent);
 /* vr.timing: the start (end 0) and end (end 1) of a stereo pass: 0 and 1
 the eyes, 2 the HUD */
 void vr_pass_mark(int pass, int end);

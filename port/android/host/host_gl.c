@@ -184,6 +184,70 @@ int host_gl_frame_done(uint32_t slot)
 	return status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED;
 }
 
+/* Persistently mapped buffers (GL_EXT_buffer_storage): mapped once, so a
+write is a memcpy into memory the GPU reads as it is (coherent), with no GL
+call - on the Steam Frame's Zink each map and unmap otherwise synchronizes
+the threaded context and flushes. The renderer's ring of stream buffers
+(d3d8_gl.c) keeps the GPU off the ranges it writes, as host_gl_buffer_write
+promises. */
+#define PERSISTENT_BUFFERS 16
+
+static struct
+{
+	GLuint buffer;
+	uint32_t size;
+	unsigned char *mapping;
+} persistent[PERSISTENT_BUFFERS];
+
+/* gives the buffer bound to target size bytes of storage, mapped for good;
+1 on success, 0 when the driver cannot (the buffer is then left without
+storage: give it some the ordinary way) */
+int host_gl_buffer_persist(uint32_t target, uint32_t size)
+{
+	static void (*buffer_storage)(GLenum, GLsizeiptr, const void *, GLbitfield);
+	const GLbitfield flags = GL_MAP_WRITE_BIT | 0x0040 /* PERSISTENT */ | 0x0080 /* COHERENT */;
+	GLint buffer = 0;
+	GLenum binding;
+	int slot;
+
+	if (!buffer_storage)
+		buffer_storage = (void (*)(GLenum, GLsizeiptr, const void *, GLbitfield))eglGetProcAddress("glBufferStorageEXT");
+	if (!buffer_storage)
+		return 0;
+	binding = target == GL_ARRAY_BUFFER ? GL_ARRAY_BUFFER_BINDING :
+		target == GL_ELEMENT_ARRAY_BUFFER ? GL_ELEMENT_ARRAY_BUFFER_BINDING : GL_COPY_WRITE_BUFFER_BINDING;
+	glGetIntegerv(binding, &buffer);
+	for (slot = 0; slot < PERSISTENT_BUFFERS && persistent[slot].buffer; slot++)
+		;
+	if (!buffer || slot == PERSISTENT_BUFFERS)
+		return 0;
+	buffer_storage(target, size, NULL, flags);
+	persistent[slot].mapping = glMapBufferRange(target, 0, size, flags);
+	if (!persistent[slot].mapping)
+		return 0;
+	persistent[slot].buffer = (GLuint)buffer;
+	persistent[slot].size = size;
+	return 1;
+}
+
+/* writes into a persistently mapped buffer; 0 if it is not one */
+int host_gl_buffer_write_persistent(uint32_t buffer, uint32_t offset, uint32_t size, const void *data)
+{
+	int slot;
+
+	for (slot = 0; slot < PERSISTENT_BUFFERS && persistent[slot].buffer; slot++)
+	{
+		if (persistent[slot].buffer == buffer)
+		{
+			if (offset > persistent[slot].size || size > persistent[slot].size - offset)
+				return 0;
+			memcpy(persistent[slot].mapping + offset, data, size);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* writes data into the buffer bound to target. The renderer streams a
 range per draw, so a frame makes hundreds of these, and the cost per call
 rather than per byte is what a frame is made of.

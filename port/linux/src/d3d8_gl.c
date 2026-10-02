@@ -354,6 +354,9 @@ struct gl_device
 #ifdef HALO_ANDROID
 	GLuint stream_buffers[STREAM_BUFFER_RING];
 	GLuint index_buffers[STREAM_BUFFER_RING];
+	/* the ring's buffers are mapped for good (host_gl_buffer_persist):
+	uploads are copies, with no GL call each */
+	BOOL stream_persistent, index_persistent;
 	unsigned long buffer_ring;
 #endif
 	unsigned long stream_offset;
@@ -958,15 +961,28 @@ static void gl_initialize(void)
 	{
 		int ring;
 
+		BOOL persist = host_gl_has_extension("GL_EXT_buffer_storage");
+
 		glGenBuffers(STREAM_BUFFER_RING, device.stream_buffers);
 		glGenBuffers(STREAM_BUFFER_RING, device.index_buffers);
+		device.stream_persistent = device.index_persistent = persist;
 		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
 		{
 			glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffers[ring]);
-			glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+			if (!persist || !host_gl_buffer_persist(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE))
+			{
+				glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+				device.stream_persistent = FALSE;
+			}
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffers[ring]);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+			if (!persist || !host_gl_buffer_persist(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE))
+			{
+				glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
+				device.index_persistent = FALSE;
+			}
 		}
+		platform_log("stream buffers: %s", device.stream_persistent && device.index_persistent ?
+			"persistently mapped" : persist ? "partly persistently mapped" : "written by mapping");
 		device.stream_buffer = device.stream_buffers[0];
 		device.index_buffer = device.index_buffers[0];
 	}
@@ -3115,6 +3131,21 @@ static void stream_reserve(unsigned long size)
 {
 	if (device.stream_offset + size > STREAM_BUFFER_SIZE)
 	{
+#ifdef HALO_ANDROID
+		if (device.stream_persistent)
+		{
+			/* storage that is mapped for good cannot be orphaned: wait for
+			the draws that read it, then start again */
+			static BOOL logged;
+
+			if (!logged)
+				platform_log("stream buffer full within a frame: waiting for the GPU");
+			logged = TRUE;
+			glFinish();
+			device.stream_offset = 0;
+			return;
+		}
+#endif
 		/* orphan the buffer and start again */
 		state_array_buffer(device.stream_buffer);
 		glBufferData(GL_ARRAY_BUFFER, STREAM_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
@@ -3131,7 +3162,11 @@ static unsigned long stream_upload(const void *data, unsigned long size)
 	offset = device.stream_offset;
 	state_array_buffer(device.stream_buffer);
 #ifdef HALO_ANDROID
-	host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	if (!device.stream_persistent ||
+		!host_gl_buffer_write_persistent(device.stream_buffer, (unsigned int)offset, (unsigned int)size, data))
+	{
+		host_gl_buffer_write(GL_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	}
 #else
 	glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
 #endif
@@ -3189,12 +3224,22 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	state_element_array_buffer(device.index_buffer);
 	if (device.index_offset + size > INDEX_BUFFER_SIZE)
 	{
+#ifdef HALO_ANDROID
+		/* mapped for good: wait for the draws instead of orphaning */
+		if (device.index_persistent)
+			glFinish();
+		else
+#endif
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 		device.index_offset = 0;
 	}
 	offset = device.index_offset;
 #ifdef HALO_ANDROID
-	host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	if (!device.index_persistent ||
+		!host_gl_buffer_write_persistent(device.index_buffer, (unsigned int)offset, (unsigned int)size, data))
+	{
+		host_gl_buffer_write(GL_ELEMENT_ARRAY_BUFFER, (unsigned int)offset, (unsigned int)size, data);
+	}
 #else
 	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size, data);
 #endif
