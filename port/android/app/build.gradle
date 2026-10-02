@@ -53,6 +53,12 @@ android {
             jniLibs.srcDirs = [new File(staged, "jniLibs")]
             assets.srcDirs = [new File(staged, "assets")]
         }
+        if (haloVr) {
+            // the OpenXR loader (configure.py --vr)
+            vr {
+                jniLibs.srcDirs = [new File(staged, "jniLibs-vr")]
+            }
+        }
     }
 
     // the guest image is read straight from the APK

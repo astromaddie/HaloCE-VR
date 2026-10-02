@@ -13,7 +13,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | M2: the game on a flat screen in the headset | Code done. The frame protocol is paced by OpenXR. Waits on the game data and a headset check. |
 | M3: stereo gameplay with a HUD layer | Code done, untested. Diagnostics: `vr.force_render`, `vr.diag_yaw`, `vr.dump_frame`. |
 | M4: head aiming, snap/smooth turn, recentre | Code done, untested. |
-| M5: hand-aimed weapons | Not started. |
+| M5: hand-aimed weapons | Code done, untested, off by default (`vr.aim = "hand"`). |
 | M6: scope, settings, comfort, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -98,6 +98,18 @@ texture names, which it draws into directly.
   - When the game turns the player itself, the heading follows.
   - View magnetism is off while the head aims.
 
+**Hand aim (`vr.aim = "hand"`).**
+- **On foot.** The right controller's aim pose sets the facing. Shots, grenades and melee follow
+  the aiming vector.
+  - The left stick is turned to move relative to the head.
+  - In local games shots start at the hand, through `unit_adjust_projectile_ray`, unless a wall
+    stands between the hand and the unit's eye.
+- **Weapon model.** It is posed from a camera at the grip minus `vr.weapon_offset_*` (in the aim
+  frame).
+- **Reticle.** The HUD crosshair is hidden. A reticle quad is drawn where
+  `collision_test_vector` along the hand's ray meets the world.
+- **Seats.** In vehicle and turret seats the head aims.
+
 **Input.** The headset's controllers merge into the first Xbox pad (`xinput_sdl.c`). The Frame
 controllers map one-to-one onto it (A/B/X/Y, bumpers as white/black, d-pad, view/menu as
 back/start). While the head aims, the right stick is consumed for turning.
@@ -105,8 +117,8 @@ back/start). While the head aims, the right stick is consumed for turning.
 ## Settings (`config.toml`, `[vr]`)
 
 `enabled`, `stereo`, `resolution_scale` (0.8), `world_scale` (0.328084 units/m),
-`screen_distance`, `screen_width`, `hud_distance`, `hud_width`, `snap_turn`,
-`smooth_turn_speed`.
+`screen_distance`, `screen_width`, `hud_distance`, `hud_width`, `aim` ("head"/"hand"),
+`weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`.
 
 Diagnostics:
 - `probe_seconds`: dim colours in each eye.

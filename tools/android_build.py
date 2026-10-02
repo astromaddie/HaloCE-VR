@@ -585,7 +585,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.build(outputs=staged_image, rule="android_copy", inputs=image)
     staged = [libmain, staged_sdl, staged_image]
     if vr:
-        staged_openxr = jni_dir / "libopenxr_loader.so"
+        # beside, not among, the flat build's libraries: only the vr
+        # flavour packages it (port/android/app/build.gradle)
+        staged_openxr = BUILD / "jniLibs-vr" / "arm64-v8a" / "libopenxr_loader.so"
         n.build(outputs=staged_openxr, rule="android_copy", inputs=OPENXR_DIR / "lib" / "libopenxr_loader.so")
         staged.append(staged_openxr)
     n.build(outputs="android", rule="phony", inputs=staged)
