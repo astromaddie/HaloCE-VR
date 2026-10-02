@@ -294,6 +294,11 @@ static const struct config_setting config_settings[] =
 		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
 		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"
 		"head aims either way." },
+	{ "vr.arms", _config_string, "\"ik\"", "HALO_VR_ARMS", _environment_value, _platform_vr,
+		"With vr.aim \"hand\": the first-person arms. \"ik\" reaches them from the\n"
+		"shoulders to the hands (the left to the left controller, or to the gun\n"
+		"when held near it); \"hidden\" shows the gun alone; \"animated\" moves\n"
+		"them with the gun as the game animates them." },
 	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": how far right of the game's eye the weapon's model\n"
 		"holds its grip, in metres, so the grip sits in the hand." },
@@ -322,6 +327,8 @@ static const struct config_setting config_settings[] =
 	{ "vr.timing_gpu", _config_boolean, "false", "HALO_VR_TIMING_GPU", _environment_value, _platform_vr,
 		"With vr.timing: wait for the GPU before showing each frame, to time it\n"
 		"apart (slows the game)." },
+	{ "vr.dump_cinema_frame", _config_integer, "0", "HALO_VR_DUMP_CINEMA_FRAME", _environment_value, _platform_vr,
+		"As vr.dump_frame, for this frame of cutscenes on the 3D screen." },
 	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
 		"Before the game starts, show dim test colours in each eye for this many\n"
 		"seconds and log the OpenXR frame rate; 0 skips it." },

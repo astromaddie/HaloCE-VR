@@ -70,8 +70,8 @@ static struct
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw, diag_hand_yaw;
-	long dump_frame;
-	long stereo_frames;
+	long dump_frame, dump_cinema_frame;
+	long stereo_frames, cinema_frames;
 	/* timing (vr.timing): milliseconds summed over `timed` frames */
 	int timing, gpu_finish;
 	double frame_start, pass_start, wait_ms, frame_ms, pass_ms[3], gpu_ms, copy_ms, end_ms;
@@ -145,6 +145,7 @@ void vr_initialize(void)
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.dump_frame = config_integer("vr.dump_frame");
+	vr.dump_cinema_frame = config_integer("vr.dump_cinema_frame");
 	if (vr.units_per_metre <= 0.0f)
 		vr.units_per_metre = 1.0f / 3.048f;
 	platform_log("vr: drawing %dx%d per eye; GL_EXT_sRGB_write_control %s", vr.eye_size, vr.eye_size,
@@ -276,6 +277,14 @@ static void frame_end(const struct halo_xr_layers *layers)
 
 static void dump_image(unsigned int which, int index, const char *name);
 
+/* this frame's images are to be written (vr.dump_frame of stereo play,
+vr.dump_cinema_frame of cutscenes) */
+static int dumping(void)
+{
+	return (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame) ||
+		(vr.cinema && vr.dump_cinema_frame > 0 && vr.cinema_frames == vr.dump_cinema_frame);
+}
+
 /* copies framebuffer `source` (row 0 at the top) into the acquired image
 of a swapchain, filling it */
 static int copy_to_swapchain(unsigned int which, GLuint source, int width, int height)
@@ -302,7 +311,7 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	/* vr.dump_frame: the stereo frame's images, as they are shown */
-	if ((vr.stereo || vr.cinema) && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame && which < 3)
+	if (dumping() && which < 3)
 		dump_image(which, index, names[which]);
 	host_xr_release(which);
 	return 1;
@@ -686,6 +695,18 @@ int vr_weapon_view(const float position[3], float out_position[3], float out_for
 	return hand_view(&pose, extra, position, out_position, out_forward, out_up);
 }
 
+int vr_hand_world(int hand, const float position[3], float out_position[3], float out_forward[3], float out_up[3])
+{
+	if (hand < 0 || hand > 1 || !(vr.frame.hand_valid[hand] & 1))
+		return 0;
+	return hand_view(&vr.frame.grip[hand], NULL, position, out_position, out_forward, out_up);
+}
+
+float vr_units_per_metre(void)
+{
+	return vr.units_per_metre;
+}
+
 void vr_set_reticle(float distance_units)
 {
 	vr.reticle_distance = distance_units > 0.0f ? distance_units / vr.units_per_metre : 0.0f;
@@ -913,7 +934,7 @@ static int copy_hud(GLuint texture)
 		glEnable(GL_FRAMEBUFFER_SRGB_EXT);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-	if (vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+	if (dumping())
 		dump_image(which, index, "vr-hud.bmp");
 	host_xr_release(which);
 	return 1;
@@ -1096,8 +1117,10 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = 0.0;
 		}
 	}
-	if (vr.stereo || vr.cinema)
+	if (vr.stereo)
 		vr.stereo_frames++;
+	if (vr.cinema)
+		vr.cinema_frames++;
 	vr.stereo = 0;
 	vr.cinema = 0;
 	vr.eyes_resolved = 0;

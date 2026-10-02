@@ -124,6 +124,7 @@ symbols in this file:
 #include "sound/game_sound.h"
 #include "sound/sound_manager.h"
 #include "units/units.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -1380,6 +1381,10 @@ static void first_person_weapon_build_node_matrices(
 			first_person_weapon->node_matrices,
 			(short)animation_graph->nodes.count,
 			&render.camera);
+#ifdef HALO_VR
+		/* the arms reach for the headset's hands (port/linux/game/vr_render.c) */
+		vr_render_first_person_ik(first_person_weapon->node_matrices, animation_graph);
+#endif
 	}
 
 	return;

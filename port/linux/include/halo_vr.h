@@ -54,6 +54,11 @@ void vr_render_window_end(short window_index);
 void vr_render_frustum_bounds(union real_rectangle2d *bounds);
 /* the camera the first-person weapon is posed from: the head's in stereo */
 void vr_render_weapon_camera(struct render_camera *camera);
+/* first_person_weapon_build_node_matrices: the arms of the first-person
+weapon posed for the hand that aims (vr.arms) */
+struct real_matrix4x3;
+struct animation_graph;
+void vr_render_first_person_ik(struct real_matrix4x3 *matrices, struct animation_graph *graph);
 /* player_control_update: the head aims the first local player (vr.h) */
 void vr_player_control_facing(short local_player_index);
 /* 1 while the head aims: no magnetism dragging the view */

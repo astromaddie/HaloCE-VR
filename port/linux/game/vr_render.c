@@ -18,9 +18,16 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "objects/objects.h"
 #include "physics/collisions.h"
 #include "units/units.h"
+#include "models/model_animation_definitions.h"
+#include "tag_files/tag_groups.h"
 
 #include "halo_vr.h"
 #include "../src/vr.h"
+#include "../src/port_config.h"
+
+/* port/linux/src/platform.h (a variadic call needs its prototype in scope
+on the Android guest's ABI) */
+void platform_log(const char *format, ...);
 
 int vr_render_pass = _vr_render_pass_none;
 
@@ -323,6 +330,389 @@ int vr_render_aiming(
 	void)
 {
 	return vr_aiming();
+}
+
+/* ---------- the first-person arms (vr.arms)
+
+The first-person weapon's animation poses the gun and the arms holding it
+from the camera; with the hand aiming, its camera is placed for the gun to
+sit in the right hand, which carries the arms along with the gun. "ik"
+gives the arms shoulders where the body is and solves each arm's upper arm
+and forearm to reach its hand: the right one the gun's grip as animated,
+the left one the left controller (or, held near the gun, its grip as
+animated). "hidden" shows the gun alone; "animated" leaves the arms as the
+animation has them. */
+
+/* as first_person_weapons.c and model_animations.c lay it out */
+struct vr_animation_graph_node
+{
+	char name[TAG_STRING_LENGTH+1];
+	short next_sibling_node_index;
+	short first_child_node_index;
+	short parent_node_index;
+	word pad;
+	unsigned long flags;
+	real_vector3d base_vector;
+	real range;
+	long pad1;
+};
+
+enum
+{
+	_vr_arm_upper,
+	_vr_arm_fore,
+	_vr_arm_hand,
+	NUMBER_OF_VR_ARM_BONES
+};
+
+static short vr_find_node(
+	struct animation_graph *graph,
+	char const *side,
+	char const *bone)
+{
+	short index;
+
+	for (index = 0; index < graph->nodes.count; index++)
+	{
+		struct vr_animation_graph_node const *node =
+			TAG_BLOCK_GET_ELEMENT(&graph->nodes, index, struct vr_animation_graph_node);
+
+		if (strstr(node->name, side) && strstr(node->name, bone))
+			return index;
+	}
+	return NONE;
+}
+
+static real vr_length(real_vector3d const *v)
+{
+	return (real)sqrt(v->i * v->i + v->j * v->j + v->k * v->k);
+}
+
+static void vr_point_minus(real_point3d const *a, real_point3d const *b, real_vector3d *out)
+{
+	out->i = a->x - b->x;
+	out->j = a->y - b->y;
+	out->k = a->z - b->z;
+}
+
+/* the rotation (as a matrix applied to column vectors) taking direction
+a to direction b, the shortest way */
+static void vr_rotation_between(
+	real_vector3d const *a,
+	real_vector3d const *b,
+	real rotation[3][3])
+{
+	real_vector3d u = *a, v = *b, axis;
+	real c, s, t, length;
+
+	normalize3d(&u);
+	normalize3d(&v);
+	cross_product3d(&u, &v, &axis);
+	s = vr_length(&axis);
+	c = u.i * v.i + u.j * v.j + u.k * v.k;
+	if (s < 1e-6f)
+	{
+		/* parallel (or opposite: then any axis across does) */
+		memset(rotation, 0, sizeof(real) * 9);
+		rotation[0][0] = rotation[1][1] = rotation[2][2] = c >= 0.0f ? 1.0f : -1.0f;
+		return;
+	}
+	length = s;
+	axis.i /= length;
+	axis.j /= length;
+	axis.k /= length;
+	t = 1.0f - c;
+	rotation[0][0] = c + axis.i * axis.i * t;
+	rotation[0][1] = axis.i * axis.j * t - axis.k * s;
+	rotation[0][2] = axis.i * axis.k * t + axis.j * s;
+	rotation[1][0] = axis.j * axis.i * t + axis.k * s;
+	rotation[1][1] = c + axis.j * axis.j * t;
+	rotation[1][2] = axis.j * axis.k * t - axis.i * s;
+	rotation[2][0] = axis.k * axis.i * t - axis.j * s;
+	rotation[2][1] = axis.k * axis.j * t + axis.i * s;
+	rotation[2][2] = c + axis.k * axis.k * t;
+}
+
+static void vr_rotate_vector(real rotation[3][3], real_vector3d const *in, real_vector3d *out)
+{
+	real_vector3d v = *in;
+
+	out->i = rotation[0][0] * v.i + rotation[0][1] * v.j + rotation[0][2] * v.k;
+	out->j = rotation[1][0] * v.i + rotation[1][1] * v.j + rotation[1][2] * v.k;
+	out->k = rotation[2][0] * v.i + rotation[2][1] * v.j + rotation[2][2] * v.k;
+}
+
+static void vr_multiply_rotations(real a[3][3], real b[3][3], real out[3][3])
+{
+	real r[3][3];
+	int row, column;
+
+	for (row = 0; row < 3; row++)
+		for (column = 0; column < 3; column++)
+			r[row][column] = a[row][0] * b[0][column] + a[row][1] * b[1][column] + a[row][2] * b[2][column];
+	memcpy(out, r, sizeof(r));
+}
+
+/* a node moved from `from` to `to` and turned by `rotation` about itself:
+the matrix of it, or of a node it carries (whose old matrix is `node`) */
+static void vr_carry(
+	real_matrix4x3 *node,
+	real_point3d const *from,
+	real_point3d const *to,
+	real rotation[3][3])
+{
+	real_vector3d offset;
+
+	vr_point_minus(&node->position, from, &offset);
+	vr_rotate_vector(rotation, &offset, &offset);
+	node->position.x = to->x + offset.i;
+	node->position.y = to->y + offset.j;
+	node->position.z = to->z + offset.k;
+	vr_rotate_vector(rotation, &node->forward, &node->forward);
+	vr_rotate_vector(rotation, &node->left, &node->left);
+	vr_rotate_vector(rotation, &node->up, &node->up);
+}
+
+/* one arm: the shoulder, and the hand's target; bones[] the arm's nodes */
+static void vr_solve_arm(
+	struct animation_graph *graph,
+	real_matrix4x3 *matrices,
+	short bones[NUMBER_OF_VR_ARM_BONES],
+	real_point3d shoulder,
+	real_point3d const *target,
+	real_vector3d const *pole,
+	boolean hand_stays)
+{
+	real_matrix4x3 old[NUMBER_OF_VR_ARM_BONES];
+	real rotation[NUMBER_OF_VR_ARM_BONES][3][3];
+	real_point3d moved_to[NUMBER_OF_VR_ARM_BONES];
+	real_vector3d upper, fore, reach, direction, bend, old_direction;
+	real upper_length, fore_length, distance, along, across;
+	short moved[MAXIMUM_NODES_PER_ANIMATION];
+	short index, bone;
+
+	for (bone = 0; bone < NUMBER_OF_VR_ARM_BONES; bone++)
+		old[bone] = matrices[bones[bone]];
+	vr_point_minus(&old[_vr_arm_fore].position, &old[_vr_arm_upper].position, &upper);
+	vr_point_minus(&old[_vr_arm_hand].position, &old[_vr_arm_fore].position, &fore);
+	upper_length = vr_length(&upper);
+	fore_length = vr_length(&fore);
+	if (upper_length < 1e-4f || fore_length < 1e-4f)
+		return;
+	vr_point_minus(target, &shoulder, &reach);
+	distance = vr_length(&reach);
+	if (distance < 1e-4f)
+		return;
+	direction = reach;
+	normalize3d(&direction);
+	/* out of reach: the shoulder comes forward rather than the hand
+	letting go */
+	if (distance > (upper_length + fore_length) * 0.999f)
+	{
+		distance = (upper_length + fore_length) * 0.999f;
+		shoulder.x = target->x - direction.i * distance;
+		shoulder.y = target->y - direction.j * distance;
+		shoulder.z = target->z - direction.k * distance;
+	}
+	if (distance < (real)fabs(upper_length - fore_length) + 1e-3f)
+		distance = (real)fabs(upper_length - fore_length) + 1e-3f;
+	/* the elbow: in the plane of the reach and the pole */
+	{
+		real dot = pole->i * direction.i + pole->j * direction.j + pole->k * direction.k;
+
+		bend.i = pole->i - direction.i * dot;
+		bend.j = pole->j - direction.j * dot;
+		bend.k = pole->k - direction.k * dot;
+		if (vr_length(&bend) < 1e-4f)
+			return;
+		normalize3d(&bend);
+	}
+	along = (upper_length * upper_length + distance * distance - fore_length * fore_length) / (2.0f * distance);
+	across = upper_length * upper_length - along * along;
+	across = across > 0.0f ? (real)sqrt(across) : 0.0f;
+	moved_to[_vr_arm_upper] = shoulder;
+	moved_to[_vr_arm_fore].x = shoulder.x + direction.i * along + bend.i * across;
+	moved_to[_vr_arm_fore].y = shoulder.y + direction.j * along + bend.j * across;
+	moved_to[_vr_arm_fore].z = shoulder.z + direction.k * along + bend.k * across;
+	moved_to[_vr_arm_hand] = *target;
+
+	/* each bone turned to point at the next joint, and the hand carried by
+	the forearm's turn */
+	vr_point_minus(&moved_to[_vr_arm_fore], &moved_to[_vr_arm_upper], &reach);
+	vr_rotation_between(&upper, &reach, rotation[_vr_arm_upper]);
+	vr_rotate_vector(rotation[_vr_arm_upper], &fore, &old_direction);
+	vr_point_minus(&moved_to[_vr_arm_hand], &moved_to[_vr_arm_fore], &reach);
+	vr_rotation_between(&old_direction, &reach, rotation[_vr_arm_fore]);
+	vr_multiply_rotations(rotation[_vr_arm_fore], rotation[_vr_arm_upper], rotation[_vr_arm_fore]);
+	if (hand_stays)
+	{
+		/* the hand holding the gun stays as the controller put it, and with
+		it the gun (the hand's child) */
+		memset(rotation[_vr_arm_hand], 0, sizeof(rotation[_vr_arm_hand]));
+		rotation[_vr_arm_hand][0][0] = rotation[_vr_arm_hand][1][1] = rotation[_vr_arm_hand][2][2] = 1.0f;
+		moved_to[_vr_arm_hand] = old[_vr_arm_hand].position;
+	}
+	else
+	{
+		memcpy(rotation[_vr_arm_hand], rotation[_vr_arm_fore], sizeof(rotation[_vr_arm_hand]));
+	}
+
+	/* every node under a moved bone goes with the nearest one above it;
+	the graph lists parents before children */
+	for (index = 0; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+	{
+		struct vr_animation_graph_node const *node =
+			TAG_BLOCK_GET_ELEMENT(&graph->nodes, index, struct vr_animation_graph_node);
+
+		moved[index] = NONE;
+		for (bone = 0; bone < NUMBER_OF_VR_ARM_BONES; bone++)
+		{
+			if (bones[bone] == index)
+				moved[index] = bone;
+		}
+		if (moved[index] == NONE && node->parent_node_index >= 0 && node->parent_node_index < index)
+			moved[index] = moved[node->parent_node_index];
+		if (moved[index] != NONE)
+		{
+			bone = moved[index];
+			vr_carry(&matrices[index], &old[bone].position, &moved_to[bone], rotation[bone]);
+		}
+	}
+}
+
+void vr_render_first_person_ik(
+	real_matrix4x3 *matrices,
+	struct animation_graph *graph)
+{
+	static char const *const arms_setting_names[] = { "ik", "hidden", "animated" };
+	static int arms = -1;
+	static struct animation_graph *logged;
+	short left[NUMBER_OF_VR_ARM_BONES], right[NUMBER_OF_VR_ARM_BONES];
+	int side, bone;
+
+	if (arms < 0)
+	{
+		char const *setting = config_string("vr.arms");
+
+		for (arms = 0; arms < 3 && strcmp(setting, arms_setting_names[arms]); arms++)
+			;
+		if (arms == 3)
+			arms = 0;
+	}
+	if (!vr_render.stereo || !vr_hand_aiming() || arms == 2 || !graph)
+		return;
+	for (side = 0; side < 2; side++)
+	{
+		static char const *const bone_names[] = { "upperarm", "forearm", "wrist" };
+		short *chain = side ? right : left;
+
+		/* Halo's graphs name the hands' bones "wriste" (or "hand") */
+		for (bone = 0; bone < NUMBER_OF_VR_ARM_BONES; bone++)
+			chain[bone] = vr_find_node(graph, side ? "r " : "l ", bone_names[bone]);
+		if (chain[_vr_arm_hand] == NONE)
+			chain[_vr_arm_hand] = vr_find_node(graph, side ? "r " : "l ", "hand");
+	}
+	if (logged != graph)
+	{
+		short index;
+
+		logged = graph;
+		for (index = 0; index < graph->nodes.count; index++)
+		{
+			struct vr_animation_graph_node const *node =
+				TAG_BLOCK_GET_ELEMENT(&graph->nodes, index, struct vr_animation_graph_node);
+
+			platform_log("vr: first-person node %d '%s' parent %d", index, node->name, node->parent_node_index);
+		}
+		platform_log("vr: arms: left %d %d %d, right %d %d %d", left[0], left[1], left[2], right[0], right[1], right[2]);
+	}
+	for (side = 0; side < 2; side++)
+	{
+		short *chain = side ? right : left;
+
+		for (bone = 0; bone < NUMBER_OF_VR_ARM_BONES; bone++)
+		{
+			if (chain[bone] == NONE)
+				return;
+		}
+	}
+
+	if (arms == 1)
+	{
+		short gun = vr_find_node(graph, "frame", "gun");
+
+		/* hidden: the arms' bones (and what they carry) shrunk to nothing,
+		at the shoulder's place */
+		short index;
+
+		for (index = 0; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+		{
+			struct vr_animation_graph_node const *node =
+				TAG_BLOCK_GET_ELEMENT(&graph->nodes, index, struct vr_animation_graph_node);
+			boolean arm = FALSE;
+			short at;
+
+			/* an arm's bone, unless it is the gun's (the right hand's child)
+			or under it */
+			for (at = index; at >= 0 && at < graph->nodes.count && !arm;
+				at = TAG_BLOCK_GET_ELEMENT(&graph->nodes, at, struct vr_animation_graph_node)->parent_node_index)
+			{
+				if (at == gun)
+					break;
+				arm = at == left[_vr_arm_upper] || at == right[_vr_arm_upper];
+				if (TAG_BLOCK_GET_ELEMENT(&graph->nodes, at, struct vr_animation_graph_node)->parent_node_index >= at)
+					break;
+			}
+			(void)node;
+			if (arm)
+				matrices[index].scale = 0.0f;
+		}
+		return;
+	}
+
+	{
+		real units = vr_units_per_metre();
+		real_point3d head = vr_render.head_camera.position, shoulder, target;
+		real_vector3d forward, right_side, up = { 0.0f, 0.0f, 1.0f }, pole;
+
+		if (!vr_heading_forward(forward.n))
+			forward = vr_render.head_camera.forward;
+		forward.k = 0.0f;
+		normalize3d(&forward);
+		right_side.i = forward.j;
+		right_side.j = -forward.i;
+		right_side.k = 0.0f;
+		for (side = 0; side < 2; side++)
+		{
+			short *chain = side ? right : left;
+			real outward = side ? 1.0f : -1.0f;
+
+			/* shoulders below and either side of the eyes, a little back */
+			shoulder.x = head.x + (right_side.i * 0.17f * outward - forward.i * 0.06f) * units;
+			shoulder.y = head.y + (right_side.j * 0.17f * outward - forward.j * 0.06f) * units;
+			shoulder.z = head.z - 0.22f * units;
+			/* elbows down, out and back */
+			pole.i = right_side.i * 0.6f * outward - forward.i * 0.3f;
+			pole.j = right_side.j * 0.6f * outward - forward.j * 0.3f;
+			pole.k = -1.0f;
+			target = matrices[chain[_vr_arm_hand]].position;
+			if (!side)
+			{
+				/* the left hand on the left controller, unless it is near the
+				gun's grip for it */
+				real_point3d hand;
+				real_vector3d hand_forward, hand_up, gap;
+
+				if (vr_hand_world(0, vr_render.game_camera_position.n, hand.n, hand_forward.n, hand_up.n))
+				{
+					vr_point_minus(&hand, &target, &gap);
+					if (vr_length(&gap) > 0.15f * units)
+						target = hand;
+				}
+			}
+			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, side == 1);
+		}
+	}
 }
 
 #endif /* HALO_VR */

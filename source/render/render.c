@@ -680,7 +680,13 @@ void render_frame(
 			window_type = 1;
 		}
 
+#ifdef HALO_VR
+		vr_render_window_begin(window_index);
+#endif
 		render_nonplayer_frame(window, window_type);
+#ifdef HALO_VR
+		vr_render_window_end(window_index);
+#endif
 	}
 
 	halo_screen_ui_offset(TRUE);

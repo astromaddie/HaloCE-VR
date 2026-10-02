@@ -95,6 +95,11 @@ int vr_hand_ray(const float position[3], float out_origin[3], float out_directio
 /* the camera the first-person weapon's model is posed from, for it to sit
 in the right hand; 0 unless the hand aims */
 int vr_weapon_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3]);
+/* a hand's grip (0 left, 1 right) in the world, seen from where the game's
+camera is (`position`); 0 when it is not tracked */
+int vr_hand_world(int hand, const float position[3], float out_position[3], float out_forward[3], float out_up[3]);
+/* the game's world units per metre (vr.world_scale) */
+float vr_units_per_metre(void);
 /* how far along the hand's ray the reticle shows this frame, in world units */
 void vr_set_reticle(float distance_units);
 
