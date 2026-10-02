@@ -159,6 +159,9 @@ left Y), west and north the Frame's right X and Y. */
 #define HALO_XR_HAND_DPAD_LEFT 0x0400u
 #define HALO_XR_HAND_DPAD_RIGHT 0x0800u
 
+/* flags for host_xr_recenter */
+#define HALO_XR_RECENTRE_HEIGHT 0x1u      /* also take the head's height as the standing height */
+
 /* layer flags for host_xr_end_frame */
 #define HALO_XR_LAYER_PROJECTION 0x1u     /* both eye swapchains, as posed this frame */
 #define HALO_XR_LAYER_QUAD 0x2u

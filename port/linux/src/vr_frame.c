@@ -59,7 +59,7 @@ static struct
 	int heading_valid, aiming, aiming_last_frame;
 	/* vr.snap_turn (radians, 0 for smooth), vr.smooth_turn_speed (radians a second) */
 	float snap_turn, smooth_turn_speed;
-	int snap_armed, recentre_held;
+	int snap_armed;
 	/* vr.aim = "hand": the right controller aims (else the head), and the
 	head's and the aim's yaw this frame, for the left stick */
 	int hand_aim, hand_aiming, hand_aiming_last_frame, seated;
@@ -77,7 +77,7 @@ static struct
 	unsigned int pad_buttons;
 	float pad_trigger[2];
 	double view_held;
-	int view_recentred, back_pulse, zoom_down;
+	int view_recentred, view_recalibrated, back_pulse, zoom_down;
 	int move_relative; /* 0 head, 1 left hand, 2 right hand */
 	/* the hand that holds the weapon (vr.left_handed; swapped by bringing
 	the palms together and gripping) */
@@ -305,6 +305,49 @@ static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
 static void look_rotation(const float forward[3], const float up[3], float out[4]);
 
+/* The system layer (the same in every port): View, the left controller's
+(Touch and Index: its upper face button), goes back on a short press (as the
+button lets go); held 1 s it recentres (yaw and horizontal position, the
+standing height kept) with a buzz in both hands; held 3 s it recentres and
+recalibrates the standing height (and so the crouch reference) with another
+buzz. Menu is the game's Start (layout_controls). Stick clicks and chords
+stay game actions. */
+static void system_layer(unsigned int left)
+{
+	double seconds = vr.frame.predicted_display_period * 1e-9;
+
+	if ((left & (HALO_XR_HAND_VIEW | HALO_XR_HAND_EAST)) && (vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+	{
+		vr.view_held += seconds;
+		if (vr.view_held >= 1.0 && !vr.view_recentred)
+		{
+			host_xr_recenter(0);
+			vr.heading_valid = 0;
+			vr.view_recentred = 1;
+			platform_log("vr: recentre (View held 1 s)");
+			vr_haptic(0, 0.6f, 0.08f);
+			vr_haptic(1, 0.6f, 0.08f);
+		}
+		if (vr.view_held >= 3.0 && !vr.view_recalibrated)
+		{
+			host_xr_recenter(HALO_XR_RECENTRE_HEIGHT);
+			vr.heading_valid = 0;
+			vr.view_recalibrated = 1;
+			platform_log("vr: recentre and standing height (View held 3 s)");
+			vr_haptic(0, 0.6f, 0.08f);
+			vr_haptic(1, 0.6f, 0.08f);
+		}
+	}
+	else
+	{
+		if (vr.view_held > 0.0 && !vr.view_recentred && (vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+			vr.back_pulse = 2;
+		vr.view_held = 0.0;
+		vr.view_recentred = 0;
+		vr.view_recalibrated = 0;
+	}
+}
+
 /* the VR layout (vr.controls "vr") on the Xbox pad the game reads, whose
 buttons do (input_abstraction.c): A jump, B melee, X action and reload,
 Y switch weapons, white flashlight, black switch grenades, left trigger
@@ -315,11 +358,18 @@ static void layout_controls(void)
 	static const float zoom_on = 0.6f, zoom_off = 0.45f;
 	unsigned int right = vr.frame.hand_buttons[1], left = vr.frame.hand_buttons[0];
 	unsigned int buttons = 0;
-	double seconds = vr.frame.predicted_display_period * 1e-9;
 
+	/* the system layer first, in either layout */
+	system_layer(left);
 	if (!vr.layout_vr)
 	{
-		vr.pad_buttons = vr.frame.buttons;
+		/* the pad's back is the View button's short press (system_layer) */
+		vr.pad_buttons = vr.frame.buttons & ~(unsigned int)HALO_XR_BUTTON_BACK;
+		if (vr.back_pulse > 0)
+		{
+			vr.pad_buttons |= HALO_XR_BUTTON_BACK;
+			vr.back_pulse--;
+		}
 		memcpy(vr.pad_trigger, vr.frame.trigger, sizeof(vr.pad_trigger));
 		return;
 	}
@@ -342,27 +392,6 @@ static void layout_controls(void)
 		vr.zoom_down = 0;
 	if (vr.zoom_down)
 		buttons |= HALO_XR_BUTTON_RIGHT_THUMB;
-	/* View (Touch: the left's upper face button): a press goes back (as the
-	button lets go), a hold of a second recentres */
-	if ((left & (HALO_XR_HAND_VIEW | HALO_XR_HAND_EAST)))
-	{
-		vr.view_held += seconds;
-		if (vr.view_held >= 1.0 && !vr.view_recentred)
-		{
-			host_xr_recenter();
-			vr.heading_valid = 0;
-			vr.view_recentred = 1;
-			vr_haptic(0, 0.6f, 0.08f);
-			vr_haptic(1, 0.6f, 0.08f);
-		}
-	}
-	else
-	{
-		if (vr.view_held > 0.0 && !vr.view_recentred)
-			vr.back_pulse = 2;
-		vr.view_held = 0.0;
-		vr.view_recentred = 0;
-	}
 	if (vr.back_pulse > 0)
 	{
 		buttons |= HALO_XR_BUTTON_BACK;
@@ -629,12 +658,6 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 		every frame anyway: scripts that wait for the player to look (the
 		first level's look test) watch the stick, not the view */
 		thumb[2] = 0.0f;
-		/* both sticks pressed together recentre (vr_aim) */
-		if ((*buttons & (HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB)) ==
-			(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB))
-		{
-			*buttons &= ~(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB);
-		}
 	}
 	if (vr.aiming_last_frame && !vr.seated)
 	{
@@ -1194,7 +1217,6 @@ static int hand_forward(float out[3])
 int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_heading, float out_forward[3])
 {
 	const unsigned int needed = HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
-	unsigned int both = HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB;
 	float head[3], aim[3], head_yaw, cosine, sine;
 
 	vr.aiming = 0;
@@ -1206,20 +1228,6 @@ int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_headi
 		synthesize_views();
 	if ((vr.frame.flags & needed) != needed)
 		return 0;
-	/* both sticks pressed: the way the player faces becomes forward */
-	if ((vr.frame.buttons & both) == both)
-	{
-		if (!vr.recentre_held)
-		{
-			host_xr_recenter();
-			vr.heading_valid = 0;
-		}
-		vr.recentre_held = 1;
-	}
-	else
-	{
-		vr.recentre_held = 0;
-	}
 	head_forward(head);
 	update_aim_pose();
 	/* the hand aims where the caller allows it (on foot; a driver's seat
@@ -1974,6 +1982,11 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			if (mode != VR_MODE_STEREO)
 				place_screen(mode == VR_MODE_CINEMA ? vr.cinema_distance : vr.screen_distance);
 			vr.mode = mode;
+		}
+		else if ((vr.frame.flags & HALO_XR_FRAME_RECENTRED) && mode != VR_MODE_STEREO)
+		{
+			/* a recentre brings the world-locked screen back ahead */
+			place_screen(mode == VR_MODE_CINEMA ? vr.cinema_distance : vr.screen_distance);
 		}
 	}
 	if (vr.cinema)

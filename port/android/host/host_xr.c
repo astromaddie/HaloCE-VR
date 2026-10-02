@@ -9,8 +9,10 @@ guest sees plain structures (halo_android_abi.h) and GL texture names,
 which it can draw into directly: its GL calls reach the same driver.
 
 Poses go to the guest relative to a recentred LOCAL frame: the head's yaw
-and position when the session gains focus or the guest asks
-(host_xr_recenter) become the origin, facing -z.
+and position when the session gains focus, the guest asks (host_xr_recenter)
+or the runtime recentres its own LOCAL space become the origin, facing -z.
+The origin's height (the standing height) is taken at focus and when asked
+for with HALO_XR_RECENTRE_HEIGHT, and kept by a plain recentre.
 */
 
 #ifdef HALO_VR
@@ -99,8 +101,13 @@ static struct
 	int frame_begun;
 	XrView views[2];
 	int views_valid;
-	/* recentring: LOCAL yaw (about +y) and position of the origin */
-	int recentre_pending, recentred_this_frame;
+	/* recentring: LOCAL yaw (about +y) and position of the origin. The
+	origin's height is the standing height: it is taken again only when
+	recentre_height says so (or has never been taken); a recentre not before
+	recentre_not_before (the runtime's own, which moves the space at a time
+	given) waits for that time */
+	int recentre_pending, recentred_this_frame, recentre_height, recentre_height_taken;
+	XrTime recentre_not_before;
 	float recentre_yaw, recentre_position[3];
 	JavaVM *vm;
 	jobject activity;
@@ -211,6 +218,8 @@ static void update_recentre(XrTime time)
 	xr.recentred_this_frame = 0;
 	if (!xr.recentre_pending)
 		return;
+	if (xr.recentre_not_before && time < xr.recentre_not_before)
+		return; /* the runtime's own recentre has not happened yet */
 	if (XR_FAILED(xrLocateSpace(xr.view, xr.local, time, &location)) ||
 		!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) ||
 		!(location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT))
@@ -226,12 +235,19 @@ static void update_recentre(XrTime time)
 	/* a turn by yaw about +y takes (0, 0, -1) to (-sin yaw, 0, -cos yaw) */
 	xr.recentre_yaw = atan2f(-forward_x, -forward_z);
 	xr.recentre_position[0] = location.pose.position.x;
-	xr.recentre_position[1] = location.pose.position.y;
 	xr.recentre_position[2] = location.pose.position.z;
+	if (xr.recentre_height || !xr.recentre_height_taken)
+	{
+		xr.recentre_position[1] = location.pose.position.y;
+		xr.recentre_height_taken = 1;
+	}
 	xr.recentre_pending = 0;
 	xr.recentred_this_frame = 1;
-	host_logf(HOST_LOG_INFO, "[openxr] recentred: yaw %.1f, head (%.2f, %.2f, %.2f)",
-		xr.recentre_yaw * 57.29578f, xr.recentre_position[0], xr.recentre_position[1], xr.recentre_position[2]);
+	host_logf(HOST_LOG_INFO, "[openxr] recentred%s: yaw %.1f, head (%.2f, %.2f, %.2f)",
+		xr.recentre_height ? " with standing height" : "", xr.recentre_yaw * 57.29578f,
+		xr.recentre_position[0], xr.recentre_position[1], xr.recentre_position[2]);
+	xr.recentre_height = 0;
+	xr.recentre_not_before = 0;
 }
 
 /* ---------- controller actions */
@@ -811,6 +827,7 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 		host_logf(HOST_LOG_WARN, "[openxr] controller actions unavailable");
 	xr.views[0].type = xr.views[1].type = XR_TYPE_VIEW;
 	xr.recentre_pending = 1;
+	xr.recentre_height = 1;
 	clock_gettime(CLOCK_MONOTONIC, &xr.stats_start);
 	xr.failed = 0;
 	xr.initialized = 1;
@@ -836,7 +853,12 @@ static void session_state_changed(XrSessionState state)
 {
 	host_logf(HOST_LOG_INFO, "[openxr] session %s", state_name(state));
 	if (state == XR_SESSION_STATE_FOCUSED && !xr.focused)
-		xr.recentre_pending = 1; /* where the player faces on gaining focus is forward */
+	{
+		/* where the player faces on gaining focus is forward, at the height
+		they stand */
+		xr.recentre_pending = 1;
+		xr.recentre_height = 1;
+	}
 	xr.state = state;
 	xr.focused = state == XR_SESSION_STATE_FOCUSED;
 	switch (state)
@@ -864,6 +886,23 @@ static void session_state_changed(XrSessionState state)
 	}
 }
 
+/* the runtime moves a reference space (the system's own recentre: the
+player held the Steam button, or reset the room): the poses we hold relative
+to the old LOCAL origin are stale, so recentre as the View hold does, with
+the height (the origin's height may have moved too), once the space has
+moved */
+static void reference_space_changing(const XrEventDataReferenceSpaceChangePending *change)
+{
+	if (change->referenceSpaceType != XR_REFERENCE_SPACE_TYPE_LOCAL)
+		return;
+	host_logf(HOST_LOG_INFO, "[openxr] the runtime recentres LOCAL (in %.0f ms): recentring with it",
+		change->changeTime > xr.frame_state.predictedDisplayTime ?
+		(change->changeTime - xr.frame_state.predictedDisplayTime) * 1e-6 : 0.0);
+	xr.recentre_pending = 1;
+	xr.recentre_height = 1;
+	xr.recentre_not_before = change->changeTime;
+}
+
 static void poll_events(void)
 {
 	XrEventDataBuffer event = { XR_TYPE_EVENT_DATA_BUFFER };
@@ -874,6 +913,8 @@ static void poll_events(void)
 			session_state_changed(((const XrEventDataSessionStateChanged *)&event)->state);
 		else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
 			xr.exiting = 1;
+		else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+			reference_space_changing((const XrEventDataReferenceSpaceChangePending *)&event);
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
 		event.next = NULL;
 	}
@@ -1207,9 +1248,11 @@ float host_xr_set_refresh_rate(float hertz)
 	return chosen;
 }
 
-void host_xr_recenter(void)
+void host_xr_recenter(uint32_t flags)
 {
 	xr.recentre_pending = 1;
+	if (flags & HALO_XR_RECENTRE_HEIGHT)
+		xr.recentre_height = 1;
 }
 
 void host_xr_haptic(uint32_t hand, float amplitude, float seconds)

@@ -129,8 +129,10 @@ int host_xr_acquire(unsigned int which);
 void host_xr_release(unsigned int which);
 /* ends the frame begun, showing these layers (NULL: none) */
 void host_xr_end_frame(const struct halo_xr_layers *layers);
-/* the head's heading and position next frame become the origin */
-void host_xr_recenter(void);
+/* the head's heading and horizontal position next frame become the origin;
+with HALO_XR_RECENTRE_HEIGHT in flags its height does too (the standing
+height, which crouching is measured from), else the last height is kept */
+void host_xr_recenter(unsigned int flags);
 /* asks for the display refresh rate nearest at or below hertz; returns it,
 or 0 when the runtime cannot change it */
 float host_xr_set_refresh_rate(float hertz);
