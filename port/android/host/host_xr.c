@@ -388,7 +388,11 @@ static int create_actions(void)
 		{ _action_b, "/user/hand/right/input/b/click" },
 		{ _action_x, "/user/hand/left/input/a/click" },
 		{ _action_y, "/user/hand/left/input/b/click" },
-		{ _action_start, "/user/hand/left/input/system/click" },
+		/* (Menu is the trackpads' press: the system button is the runtime's, and
+		Index has no other free input. A float bound to a boolean action reads as
+		pressed past the runtime's threshold, a firm press) */
+		{ _action_start, "/user/hand/left/input/trackpad/force" },
+		{ _action_start, "/user/hand/right/input/trackpad/force" },
 		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
 		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		POSES("left"), POSES("right"),
@@ -398,7 +402,8 @@ static int create_actions(void)
 		{ _action_hand_east, "/user/hand/left/input/b/click" },
 		{ _action_hand_stick, "/user/hand/left/input/thumbstick/click" },
 		{ _action_hand_stick, "/user/hand/right/input/thumbstick/click" },
-		{ _action_hand_menu, "/user/hand/left/input/system/click" },
+		{ _action_hand_menu, "/user/hand/left/input/trackpad/force" },
+		{ _action_hand_menu, "/user/hand/right/input/trackpad/force" },
 	};
 	XrActionSetCreateInfo set_info = { XR_TYPE_ACTION_SET_CREATE_INFO };
 	XrSessionActionSetsAttachInfo attach = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
@@ -422,7 +427,7 @@ static int create_actions(void)
 	ok &= create_action(_action_y, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y, Xbox layout (switch weapons)", 0);
 	ok &= create_action(_action_white, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_white", "Left bumper, Xbox layout (flashlight)", 0);
 	ok &= create_action(_action_black, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_black", "Right bumper, Xbox layout (switch grenades)", 0);
-	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu (pause)", 0);
+	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu (pause; Index: a firm press of a trackpad)", 0);
 	ok &= create_action(_action_back, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_back", "View (back; Xbox layout: held 1 s recentres, 3 s also the standing height)", 0);
 	ok &= create_action(_action_left_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb", "Left stick click, Xbox layout (crouch)", 0);
 	ok &= create_action(_action_right_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb", "Right stick click, Xbox layout (zoom)", 0);
@@ -439,7 +444,7 @@ static int create_actions(void)
 	ok &= create_action(_action_hand_north, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_north", "Top face button (switch weapons)", 1);
 	ok &= create_action(_action_hand_bumper, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_bumper", "Bumper (weapon hand: throw grenade; other hand: flashlight; Touch and Index: grip and stick click together)", 1);
 	ok &= create_action(_action_hand_stick, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_stick", "Stick click (right: melee; left: crouch)", 1);
-	ok &= create_action(_action_hand_menu, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_menu", "Menu (pause)", 1);
+	ok &= create_action(_action_hand_menu, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_menu", "Menu (pause; Index: a firm press of a trackpad)", 1);
 	ok &= create_action(_action_hand_view, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_view", "View (back; held 1 s recentres, 3 s also the standing height)", 1);
 	if (!ok)
 		return 0;
