@@ -12,8 +12,10 @@ and boxes, with a list of settings in two columns where the list and the
 mission objectives were. Each setting is a button cloned from "RESUME
 GAME": A or right steps it to its next value, left to its previous; B goes
 back to the pause menu. The settings are written into config.toml as they
-change, and the VR layer takes them up at once (vr_reload_settings). The
-last item, QUIT TO STEAM, is not a setting: A asks "SURE?", and A again
+change, and the VR layer takes them up at once (vr_reload_settings). There are
+two pages of ten items at most (five rows in each of two columns): the first
+page's last item, MORE..., opens the second (B goes back a page). The last
+item of all, QUIT TO STEAM, is not a setting: A asks "SURE?", and A again
 (within a few seconds) ends the OpenXR session and exits (vr_request_exit);
 left, B, another item or the time puts it back.
 
@@ -129,40 +131,47 @@ enum
 	_vr_setting_turning,
 	/* not a setting: quits the game, after a second press of A */
 	_vr_setting_quit,
+	/* not a setting: opens the second page (its widget handler does) */
+	_vr_setting_page,
 };
 
 static struct vr_menu_setting
 {
 	char const *label, *key;
 	short type, value_count;
+	/* the page it is on: 0 the first, 1 the second */
+	short page;
 	struct
 	{
 		char const *label, *value;
 	} values[4];
 } const vr_menu_settings[] =
 {
-	/* the left box */
-	{ "CONTROLS", "vr.controls", _vr_setting_string, 2, { { "VR", "vr" }, { "XBOX", "pad" } } },
-	{ "AIM", "vr.aim", _vr_setting_string, 2, { { "HAND", "hand" }, { "HEAD", "head" } } },
-	{ "GUN HAND", "vr.left_handed", _vr_setting_boolean, 2, { { "RIGHT", "false" }, { "LEFT", "true" } } },
+	/* the first page: the left box, then the right (five rows each) */
+	{ "CONTROLS", "vr.controls", _vr_setting_string, 2, 0, { { "VR", "vr" }, { "XBOX", "pad" } } },
+	{ "AIM", "vr.aim", _vr_setting_string, 2, 0, { { "HAND", "hand" }, { "HEAD", "head" } } },
+	{ "GUN HAND", "vr.left_handed", _vr_setting_boolean, 2, 0, { { "RIGHT", "false" }, { "LEFT", "true" } } },
 	/* (turning's values are the mode, then after a comma the snap angle) */
-	{ "TURNING", "vr.turn_mode", _vr_setting_turning, 4,
+	{ "TURNING", "vr.turn_mode", _vr_setting_turning, 4, 0,
 		{ { "SNAP 30", "snap,30" }, { "SNAP 45", "snap,45" }, { "SMOOTH", "smooth,0" }, { "OFF", "off,0" } } },
-	{ "ROOM-SCALE", "vr.roomscale", _vr_setting_boolean, 2, { { "OFF", "false" }, { "ON", "true" } } },
-	/* the right box */
-	{ "SCOPE", "vr.scope", _vr_setting_boolean, 2, { { "ON", "true" }, { "OFF", "false" } } },
-	{ "VEHICLES", "vr.vehicle_view", _vr_setting_string, 2, { { "INSIDE", "first_person" }, { "CHASE", "chase" } } },
-	{ "STEERING", "vr.vehicle_steering", _vr_setting_string, 3, { { "STICK", "stick" }, { "HEAD", "head" }, { "HAND", "hand" } } },
-	{ "CUTSCENES", "vr.cinema_3d", _vr_setting_boolean, 2, { { "3D", "true" }, { "FLAT", "false" } } },
-	/* (the right box's last row: the left box has five, the right now has five too) */
-	{ "QUIT TO STEAM", NULL, _vr_setting_quit, 1, { { "", "" } } },
+	{ "ROOM-SCALE", "vr.roomscale", _vr_setting_boolean, 2, 0, { { "OFF", "false" }, { "ON", "true" } } },
+	{ "SCOPE", "vr.scope", _vr_setting_boolean, 2, 0, { { "ON", "true" }, { "OFF", "false" } } },
+	{ "VEHICLES", "vr.vehicle_view", _vr_setting_string, 2, 0, { { "INSIDE", "first_person" }, { "CHASE", "chase" } } },
+	{ "STEERING", "vr.vehicle_steering", _vr_setting_string, 3, 0,
+		{ { "STICK", "stick" }, { "HEAD", "head" }, { "HAND", "hand" } } },
+	{ "CUTSCENES", "vr.cinema_3d", _vr_setting_boolean, 2, 0, { { "3D", "true" }, { "FLAT", "false" } } },
+	{ "MORE...", NULL, _vr_setting_page, 1, 0, { { "", "" } } },
+	/* the second page: the HUD, and last of all the way out */
+	{ "HUD", "vr.hud_mode", _vr_setting_string, 3, 1, { { "FAR", "far" }, { "NEAR", "near" }, { "LEASH", "leash" } } },
+	{ "QUIT TO STEAM", NULL, _vr_setting_quit, 1, 1, { { "", "" } } },
 };
 
 /* how long QUIT TO STEAM waits for its second press (milliseconds) */
 #define VR_MENU_QUIT_CONFIRM_MS 5000
 
 #define VR_MENU_SETTING_COUNT ((long)NUMBEROF(vr_menu_settings))
-/* the settings in the left box; the rest go in the right */
+#define VR_MENU_PAGE_COUNT 2
+/* the rows in a page's left box; the rest of its items go in the right */
 #define VR_MENU_LEFT_COUNT 5
 
 /* turning's value "mode,angle" split: the mode in `mode`, the angle */
@@ -230,7 +239,7 @@ static struct
 	it has not been asked */
 	long long quit_asked_until;
 	/* the tags this made for the map loaded, and what they point at */
-	long button_tag_index, screen_tag_index, list_tag_index;
+	long button_tag_index;
 	long setting_tag_indices[NUMBEROF(vr_menu_settings)];
 	void *allocations[64];
 	long allocation_count;
@@ -341,11 +350,83 @@ static long vr_menu_button(
 	return tag_index;
 }
 
+/* a page of the VR settings (0 the first, 1 the second): its list of the
+page's items' buttons in two columns, and its screen, the pause menu's backdrop
+and boxes with that list and the button hints; B (or back) returns to what
+opened it, start resumes. Returns the screen's tag index, NONE if it failed */
+static long vr_menu_page(
+	long page,
+	long pause_index,
+	long list_index,
+	short hints_x,
+	short right_column_x)
+{
+	static char screen_names[VR_MENU_PAGE_COUNT][64];
+	static char list_names[VR_MENU_PAGE_COUNT][64];
+	struct vr_menu_widget *pause = vr_menu_widget_get(pause_index);
+	struct vr_menu_widget *pause_list = vr_menu_widget_get(list_index);
+	struct vr_menu_widget *screen, *list;
+	struct vr_menu_child *children;
+	struct vr_menu_event_handler handlers[3];
+	long screen_tag_index, list_tag_index, index, position = 0, count = 0;
+
+	for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
+		count += vr_menu_settings[index].page == page;
+	snprintf(list_names[page], sizeof(list_names[page]), "ui\\shell\\solo_game\\pause_game\\vr_settings_list_%ld", page);
+	snprintf(screen_names[page], sizeof(screen_names[page]), "ui\\shell\\solo_game\\pause_game\\vr_settings_%ld", page);
+
+	/* the list: the pause menu's, wide enough for both columns */
+	list_tag_index = vr_menu_clone(list_index, list_names[page], "vr settings list", &list);
+	if (list_tag_index == NONE || !(children = vr_menu_allocate(count * (long)sizeof(*children))))
+		return NONE;
+	for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
+	{
+		if (vr_menu_settings[index].page != page)
+			continue;
+		memcpy(&children[position], (struct vr_menu_child *)pause_list->child_widgets.address, sizeof(children[position]));
+		vr_menu_reference(&children[position].widget_tag, vr_menu.setting_tag_indices[index]);
+		snprintf(children[position].name, sizeof(children[position].name), "vr_setting_%ld", index);
+		children[position].vertical_offset = (short)((position % VR_MENU_LEFT_COUNT) * 28);
+		children[position].horizontal_offset = position < VR_MENU_LEFT_COUNT ? 0 : right_column_x;
+		position++;
+	}
+	list->bounds.x1 = (short)(list->bounds.x1 + right_column_x);
+	list->child_widgets.count = count;
+	list->child_widgets.address = children;
+
+	/* the screen: the pause menu's backdrop and boxes, the list, and the
+	button hints */
+	screen_tag_index = vr_menu_clone(pause_index, screen_names[page], "vr_settings", &screen);
+	if (screen_tag_index == NONE || !(children = vr_menu_allocate(3 * (long)sizeof(*children))))
+		return NONE;
+	memcpy(&children[0], (struct vr_menu_child *)pause->child_widgets.address + 0, sizeof(children[0]));
+	memcpy(&children[1], (struct vr_menu_child *)pause->child_widgets.address + 1, sizeof(children[1]));
+	memcpy(&children[2], (struct vr_menu_child *)pause->child_widgets.address + 4, sizeof(children[2]));
+	vr_menu_reference(&children[1].widget_tag, list_tag_index);
+	strcpy(children[1].name, "vr_settings_list");
+	children[2].horizontal_offset = hints_x;
+	screen->child_widgets.count = 3;
+	screen->child_widgets.address = children;
+	memset(handlers, 0, sizeof(handlers));
+	handlers[0].flags = VR_MENU_CLOSE_CURRENT;
+	handlers[0].event_type = VR_MENU_EVENT_B;
+	handlers[1] = handlers[0];
+	handlers[1].event_type = VR_MENU_EVENT_BACK;
+	handlers[2].flags = VR_MENU_CLOSE_ALL;
+	handlers[2].event_type = VR_MENU_EVENT_START;
+	for (index = 0; index < 3; index++)
+	{
+		vr_menu_reference(&handlers[index].widget_tag, NONE);
+		vr_menu_reference(&handlers[index].sound_effect, NONE);
+	}
+	if (!vr_menu_handlers(screen, handlers, 3))
+		return NONE;
+	return screen_tag_index;
+}
+
 void vr_menu_tags_loaded(
 	void)
 {
-	static char screen_name[] = "ui\\shell\\solo_game\\pause_game\\vr_settings";
-	static char list_name[] = "ui\\shell\\solo_game\\pause_game\\vr_settings_list";
 	static char button_name[] = "ui\\shell\\solo_game\\pause_game\\vr_settings_button";
 	static char setting_names[NUMBEROF(vr_menu_settings)][64];
 	/* the button hints, centred under the mission objectives (from under the
@@ -355,16 +436,17 @@ void vr_menu_tags_loaded(
 	long pause_index = tag_loaded(VR_MENU_WIDGET_TAG, "ui\\shell\\solo_game\\pause_game\\pause_game");
 	long list_index = tag_loaded(VR_MENU_WIDGET_TAG, "ui\\shell\\solo_game\\pause_game\\pause_list");
 	long resume_index = tag_loaded(VR_MENU_WIDGET_TAG, "ui\\shell\\solo_game\\pause_game\\resume_game_button");
-	struct vr_menu_widget *pause, *pause_list, *screen, *list;
+	struct vr_menu_widget *pause, *pause_list;
 	struct vr_menu_child *children;
 	struct vr_menu_event_handler handlers[3];
-	long index;
+	long screen_tag_indices[VR_MENU_PAGE_COUNT];
+	long index, page;
 
 	/* (the last map's) */
 	for (index = 0; index < vr_menu.allocation_count; index++)
 		free(vr_menu.allocations[index]);
 	memset(&vr_menu, 0, sizeof(vr_menu));
-	vr_menu.button_tag_index = vr_menu.screen_tag_index = vr_menu.list_tag_index = NONE;
+	vr_menu.button_tag_index = NONE;
 	for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
 		vr_menu.setting_tag_indices[index] = NONE;
 	if (pause_index == NONE || list_index == NONE || resume_index == NONE)
@@ -394,10 +476,13 @@ void vr_menu_tags_loaded(
 		vr_menu_reference(&handlers[index].widget_tag, NONE);
 		vr_menu_reference(&handlers[index].sound_effect, NONE);
 	}
+	/* (the item that opens the second page is made once that page is) */
 	for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
 	{
 		char widget_name[32];
 
+		if (vr_menu_settings[index].type == _vr_setting_page)
+			continue;
 		snprintf(setting_names[index], sizeof(setting_names[index]),
 			"ui\\shell\\solo_game\\pause_game\\vr_setting_%ld", index);
 		snprintf(widget_name, sizeof(widget_name), "vr_setting_%ld", index);
@@ -407,57 +492,40 @@ void vr_menu_tags_loaded(
 			return;
 	}
 
-	/* the list: the pause menu's, wide enough for both columns */
-	vr_menu.list_tag_index = vr_menu_clone(list_index, list_name, "vr settings list", &list);
-	if (vr_menu.list_tag_index == NONE || !(children = vr_menu_allocate(VR_MENU_SETTING_COUNT * (long)sizeof(*children))))
-		return;
-	for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
+	/* the pages, the last first: the item opening it is on the one before */
+	for (page = VR_MENU_PAGE_COUNT - 1; page >= 0; page--)
 	{
-		long row = index < VR_MENU_LEFT_COUNT ? index : index - VR_MENU_LEFT_COUNT;
+		screen_tag_indices[page] = NONE;
+		for (index = 0; index < VR_MENU_SETTING_COUNT; index++)
+		{
+			char widget_name[32];
 
-		memcpy(&children[index], (struct vr_menu_child *)pause_list->child_widgets.address, sizeof(children[index]));
-		vr_menu_reference(&children[index].widget_tag, vr_menu.setting_tag_indices[index]);
-		snprintf(children[index].name, sizeof(children[index].name), "vr_setting_%ld", index);
-		children[index].vertical_offset = (short)(row * 28);
-		children[index].horizontal_offset = index < VR_MENU_LEFT_COUNT ? 0 : right_column_x;
+			if (vr_menu_settings[index].type != _vr_setting_page || vr_menu_settings[index].page != page)
+				continue;
+			/* A opens the next page */
+			memset(handlers, 0, sizeof(handlers));
+			handlers[0].flags = VR_MENU_OPEN_WIDGET;
+			handlers[0].event_type = VR_MENU_EVENT_A;
+			vr_menu_reference(&handlers[0].widget_tag, screen_tag_indices[page + 1]);
+			vr_menu_reference(&handlers[0].sound_effect, NONE);
+			snprintf(setting_names[index], sizeof(setting_names[index]),
+				"ui\\shell\\solo_game\\pause_game\\vr_setting_%ld", index);
+			snprintf(widget_name, sizeof(widget_name), "vr_setting_%ld", index);
+			vr_menu.setting_tag_indices[index] = vr_menu_button(resume_index, setting_names[index], widget_name,
+				handlers, 1);
+			if (vr_menu.setting_tag_indices[index] == NONE)
+				return;
+		}
+		screen_tag_indices[page] = vr_menu_page(page, pause_index, list_index, hints_x, right_column_x);
+		if (screen_tag_indices[page] == NONE)
+			return;
 	}
-	list->bounds.x1 = (short)(list->bounds.x1 + right_column_x);
-	list->child_widgets.count = VR_MENU_SETTING_COUNT;
-	list->child_widgets.address = children;
 
-	/* the screen: the pause menu's backdrop and boxes, the list, and the
-	button hints; B (or back) returns to the pause menu, start resumes */
-	vr_menu.screen_tag_index = vr_menu_clone(pause_index, screen_name, "vr_settings", &screen);
-	if (vr_menu.screen_tag_index == NONE || !(children = vr_menu_allocate(3 * (long)sizeof(*children))))
-		return;
-	memcpy(&children[0], (struct vr_menu_child *)pause->child_widgets.address + 0, sizeof(children[0]));
-	memcpy(&children[1], (struct vr_menu_child *)pause->child_widgets.address + 1, sizeof(children[1]));
-	memcpy(&children[2], (struct vr_menu_child *)pause->child_widgets.address + 4, sizeof(children[2]));
-	vr_menu_reference(&children[1].widget_tag, vr_menu.list_tag_index);
-	strcpy(children[1].name, "vr_settings_list");
-	children[2].horizontal_offset = hints_x;
-	screen->child_widgets.count = 3;
-	screen->child_widgets.address = children;
-	memset(handlers, 0, sizeof(handlers));
-	handlers[0].flags = VR_MENU_CLOSE_CURRENT;
-	handlers[0].event_type = VR_MENU_EVENT_B;
-	handlers[1] = handlers[0];
-	handlers[1].event_type = VR_MENU_EVENT_BACK;
-	handlers[2].flags = VR_MENU_CLOSE_ALL;
-	handlers[2].event_type = VR_MENU_EVENT_START;
-	for (index = 0; index < 3; index++)
-	{
-		vr_menu_reference(&handlers[index].widget_tag, NONE);
-		vr_menu_reference(&handlers[index].sound_effect, NONE);
-	}
-	if (!vr_menu_handlers(screen, handlers, 3))
-		return;
-
-	/* the pause menu's new item, opening the screen */
+	/* the pause menu's new item, opening the first page */
 	memset(handlers, 0, sizeof(handlers));
 	handlers[0].flags = VR_MENU_OPEN_WIDGET;
 	handlers[0].event_type = VR_MENU_EVENT_A;
-	vr_menu_reference(&handlers[0].widget_tag, vr_menu.screen_tag_index);
+	vr_menu_reference(&handlers[0].widget_tag, screen_tag_indices[0]);
 	vr_menu_reference(&handlers[0].sound_effect, NONE);
 	vr_menu.button_tag_index = vr_menu_button(resume_index, button_name, "vr_settings_button", handlers, 1);
 	if (vr_menu.button_tag_index == NONE || !(children = vr_menu_allocate(5 * (long)sizeof(*children))))
@@ -518,6 +586,10 @@ boolean vr_menu_setting_text(
 		{
 			snprintf(line, sizeof(line), "%s", vr_menu_quit_asked() ? "SURE? A TO QUIT" : setting->label);
 		}
+		else if (setting->type == _vr_setting_page)
+		{
+			snprintf(line, sizeof(line), "%s", setting->label);
+		}
 		else
 		{
 			long value_index = vr_menu_value_index(setting);
@@ -545,6 +617,8 @@ boolean vr_menu_setting_change(
 	if (setting_index < 0)
 		return FALSE;
 	setting = &vr_menu_settings[setting_index];
+	if (setting->type == _vr_setting_page)
+		return FALSE;
 	if (setting->type == _vr_setting_quit)
 	{
 		/* a press of A (or right) asks, a second one within the time quits;
