@@ -17,7 +17,7 @@ import java.io.FileNotFoundException;
  * (The app has no AndroidX, whose FileProvider does the same.)
  */
 public class UpdateProvider extends ContentProvider {
-    static final String AUTHORITY = "com.halo.decomp.update";
+    static final String AUTHORITY = BuildConfig.APPLICATION_ID + ".update";
     static final String DIRECTORY = "update";
     static final String APK = "halo.apk";
 

@@ -11,6 +11,7 @@ and the debug keyboard that the game's console reads.
 
 #include "platform.h"
 #include "sdl_platform.h"
+#include "vr.h"
 #include "gl.h"
 #include "port_config.h"
 #include "p2p.h"
@@ -414,6 +415,9 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
+	/* the headset's session binds to this context (HALO_VR builds) */
+	vr_initialize();
+	vr_probe();
 #ifndef HALO_ANDROID
 	platform_mouse_capture(TRUE);
 #endif

@@ -62,4 +62,104 @@ struct halo_guest_boot
 	uint32_t page_size;
 };
 
+/* ---------- OpenXR (HALO_VR builds; host/host_xr.c, port/linux/src/vr_*.c)
+
+Poses are in the runtime's LOCAL space (metres; +y up, -z forward),
+relative to the last recentre. Every member is fixed-width and 64-bit
+members come first, so both ABIs lay these out the same; the offsets are
+checked on both sides below. */
+
+#define HALO_XR_SWAPCHAIN_LEFT 0
+#define HALO_XR_SWAPCHAIN_RIGHT 1
+#define HALO_XR_SWAPCHAIN_QUAD 2
+#define HALO_XR_SWAPCHAIN_COUNT 3
+#define HALO_XR_MAXIMUM_IMAGES 4
+
+struct halo_xr_pose
+{
+	float position[3];
+	float orientation[4];        /* x, y, z, w */
+};
+
+/* filled by host_xr_init */
+struct halo_xr_info
+{
+	int64_t display_period;      /* nanoseconds */
+	int64_t color_format;        /* GL internal format of every swapchain */
+	uint32_t width[HALO_XR_SWAPCHAIN_COUNT];
+	uint32_t height[HALO_XR_SWAPCHAIN_COUNT];
+	uint32_t image_count[HALO_XR_SWAPCHAIN_COUNT];
+	uint32_t images[HALO_XR_SWAPCHAIN_COUNT][HALO_XR_MAXIMUM_IMAGES]; /* GL texture names */
+	char runtime[64];
+	char system[64];
+};
+
+/* frame flags */
+#define HALO_XR_FRAME_BEGUN 0x1u          /* end it with host_xr_end_frame */
+#define HALO_XR_FRAME_SHOULD_RENDER 0x2u
+#define HALO_XR_FRAME_FOCUSED 0x4u        /* input is ours */
+#define HALO_XR_FRAME_VIEWS_VALID 0x8u
+#define HALO_XR_FRAME_EXIT 0x10u          /* the runtime ends the session for good */
+#define HALO_XR_FRAME_RECENTRED 0x20u     /* the reference frame moved this frame */
+
+/* buttons: the Xbox pad's digital bits (XINPUT_GAMEPAD_DPAD_UP .. RIGHT_THUMB,
+port/include/xdk/xdk_xbox.h) and one bit for each of its analog buttons */
+#define HALO_XR_BUTTON_DPAD_UP 0x0001u
+#define HALO_XR_BUTTON_DPAD_DOWN 0x0002u
+#define HALO_XR_BUTTON_DPAD_LEFT 0x0004u
+#define HALO_XR_BUTTON_DPAD_RIGHT 0x0008u
+#define HALO_XR_BUTTON_START 0x0010u
+#define HALO_XR_BUTTON_BACK 0x0020u
+#define HALO_XR_BUTTON_LEFT_THUMB 0x0040u
+#define HALO_XR_BUTTON_RIGHT_THUMB 0x0080u
+#define HALO_XR_BUTTON_WHITE 0x0100u       /* left shoulder */
+#define HALO_XR_BUTTON_BLACK 0x0200u       /* right shoulder */
+#define HALO_XR_BUTTON_A 0x1000u
+#define HALO_XR_BUTTON_B 0x2000u
+#define HALO_XR_BUTTON_X 0x4000u
+#define HALO_XR_BUTTON_Y 0x8000u
+
+/* filled by host_xr_begin_frame */
+struct halo_xr_frame
+{
+	int64_t predicted_display_time; /* nanoseconds, the runtime's clock */
+	int64_t predicted_display_period;
+	uint32_t flags;
+	uint32_t session_state;      /* XrSessionState */
+	struct halo_xr_pose head;
+	struct halo_xr_pose eye[2];
+	float fov[2][4];             /* radians: left, right, up, down */
+	uint32_t hand_valid[2];      /* bit 0 grip, bit 1 aim (0 left, 1 right) */
+	struct halo_xr_pose grip[2];
+	struct halo_xr_pose aim[2];
+	uint32_t buttons;            /* HALO_XR_BUTTON_* */
+	float trigger[2];            /* 0..1 */
+	float thumb[4];              /* left x, y, right x, y: -1..1 */
+	float squeeze[2];
+};
+
+/* layer flags for host_xr_end_frame */
+#define HALO_XR_LAYER_PROJECTION 0x1u     /* both eye swapchains, as posed this frame */
+#define HALO_XR_LAYER_QUAD 0x2u
+#define HALO_XR_LAYER_QUAD_HEAD_LOCKED 0x4u /* the quad's pose is in VIEW space, else LOCAL */
+
+struct halo_xr_layers
+{
+	uint32_t flags;
+	struct halo_xr_pose quad_pose;
+	float quad_size[2];          /* metres */
+};
+
+#ifdef __cplusplus
+#define HALO_XR_ASSERT static_assert
+#else
+#define HALO_XR_ASSERT _Static_assert
+#endif
+HALO_XR_ASSERT(sizeof(struct halo_xr_pose) == 28, "halo_xr_pose layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 232, "halo_xr_info layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 296, "halo_xr_frame layout");
+HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, head) == 24, "halo_xr_frame.head");
+HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, buttons) == 260, "halo_xr_frame.buttons");
+HALO_XR_ASSERT(sizeof(struct halo_xr_layers) == 40, "halo_xr_layers layout");
+
 #endif

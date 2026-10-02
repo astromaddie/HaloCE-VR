@@ -49,6 +49,8 @@ enum
 	_platform_desktop = 1,
 	_platform_android = 2,
 	_platform_all = _platform_desktop | _platform_android,
+	/* the Android build for VR headsets (HALO_VR) only */
+	_platform_vr = 4,
 };
 
 struct config_setting
@@ -245,11 +247,20 @@ static const struct config_setting config_settings[] =
 	{ "debug.sample_seconds", _config_real, "0.0", "HALO_SAMPLE", _environment_value, _platform_android,
 		"Log where every game thread is this often, in seconds (read by the\n"
 		"app, port/android/host/host_debug.c); 0 never." },
+
+	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
+		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
+		"as the phone build does." },
+	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
+		"Before the game starts, show dim test colours in each eye for this many\n"
+		"seconds and log the OpenXR frame rate; 0 skips it." },
 };
 
 #define NUMBER_OF_CONFIG_SETTINGS (sizeof(config_settings) / sizeof(config_settings[0]))
 
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && defined(HALO_VR)
+#define CONFIG_PLATFORM (_platform_android | _platform_vr)
+#elif defined(HALO_ANDROID)
 #define CONFIG_PLATFORM _platform_android
 #else
 #define CONFIG_PLATFORM _platform_desktop

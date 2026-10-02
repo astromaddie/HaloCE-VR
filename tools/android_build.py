@@ -46,6 +46,13 @@ SDL_TAG = "release-3.4.16"
 SDL_DIR = THIRD_PARTY / "SDL3"
 SDL_URL = "https://github.com/libsdl-org/SDL.git"
 ANDROID_API = 28
+# the Khronos OpenXR loader for Android (--vr builds), as published to Maven
+# Central: its libopenxr_loader.so and headers
+OPENXR_VERSION = "1.1.63"
+OPENXR_DIR = THIRD_PARTY / f"openxr-{OPENXR_VERSION}"
+OPENXR_URL = ("https://repo1.maven.org/maven2/org/khronos/openxr/openxr_loader_for_android/"
+              f"{OPENXR_VERSION}/openxr_loader_for_android-{OPENXR_VERSION}.aar")
+OPENXR_SHA256 = "622419d2f6741c3443a3beb4779af0764318edd01830de967f24c741ebcded73"
 
 # The guest ABI: AArch64 code with 32-bit pointers (clang's only such target
 # is Apple's arm64_32, whose Mach-O output is converted afterwards). The
@@ -158,8 +165,33 @@ def _find_ndk() -> Optional[Path]:
     return None
 
 
-def fetch_third_party() -> None:
-    """Download musl and SDL3 (configure time, once)."""
+def _fetch_openxr() -> None:
+    import hashlib
+    import zipfile
+    if (OPENXR_DIR / "lib" / "libopenxr_loader.so").is_file():
+        return
+    print(f"Downloading {OPENXR_URL}")
+    archive = THIRD_PARTY / f"openxr_loader_for_android-{OPENXR_VERSION}.aar"
+    subprocess.run(["curl", "-sSfL", "-o", str(archive), OPENXR_URL], check=True)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if digest != OPENXR_SHA256:
+        archive.unlink()
+        raise OSError(f"{archive.name}: SHA-256 {digest}, expected {OPENXR_SHA256}")
+    with zipfile.ZipFile(archive) as aar:
+        for member in aar.namelist():
+            if member.startswith("prefab/modules/headers/include/openxr/") and member.endswith(".h"):
+                target = OPENXR_DIR / "include" / "openxr" / Path(member).name
+            elif member == "jni/arm64-v8a/libopenxr_loader.so":
+                target = OPENXR_DIR / "lib" / "libopenxr_loader.so"
+            else:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(aar.read(member))
+    archive.unlink()
+
+
+def fetch_third_party(vr: bool = False) -> None:
+    """Download musl and SDL3, and for VR the OpenXR loader (configure time, once)."""
     THIRD_PARTY.mkdir(parents=True, exist_ok=True)
     if not MUSL_DIR.is_dir():
         print(f"Downloading {MUSL_URL}")
@@ -171,6 +203,15 @@ def fetch_third_party() -> None:
         print(f"Cloning SDL3 {SDL_TAG}")
         subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", SDL_TAG, SDL_URL, str(SDL_DIR)],
                        check=True)
+    # local fixes to SDL3's Java side (port/android/patches), applied once
+    for patch in sorted((PORT_DIR / "patches").glob("sdl3-*.patch")):
+        check = subprocess.run(["git", "-C", str(SDL_DIR), "apply", "--check", str(patch.resolve())],
+                               capture_output=True)
+        if check.returncode == 0:
+            print(f"Applying {patch}")
+            subprocess.run(["git", "-C", str(SDL_DIR), "apply", str(patch.resolve())], check=True)
+    if vr:
+        _fetch_openxr()
 
 
 def _musl_sources() -> List[Path]:
@@ -205,8 +246,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     if not ndk or not ndk.is_dir():
         n.comment("Android build: no NDK found (set ANDROID_NDK_HOME or pass --android-ndk)")
         return
+    vr = bool(getattr(sln, "android_vr", False))
     try:
-        fetch_third_party()
+        fetch_third_party(vr)
     except (subprocess.CalledProcessError, OSError) as error:
         print(f"Android build disabled: cannot fetch musl/SDL3 ({error})", file=sys.stderr)
         return
@@ -310,8 +352,9 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         command=f"{python} tools/android_imports.py --host-table {host_table_c} {imports_s} $in",
         description="ANDROID IMPORTS",
     )
+    import_lists = [host_imports_list] + ([PORT_DIR / "host_imports_vr.list"] if vr else [])
     n.build(outputs=[imports_s, host_table_c], rule="android_imports",
-            inputs=[host_imports_list, posix_imports, gl_imports],
+            inputs=[*import_lists, posix_imports, gl_imports],
             implicit=[Path("tools/android_imports.py")])
 
     generated_headers = [*xdk_headers(), alltypes, syscall_h, version_h, gl_stamp,
@@ -338,7 +381,8 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         f"-isystem {libc_include}", f"-isystem {arch}", f"-isystem {MUSL_DIR}/arch/generic",
         f"-isystem {MUSL_DIR}/include",
     ]
-    guest_abi = " ".join(GUEST_ABI_FLAGS + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else []))
+    guest_abi = " ".join(GUEST_ABI_FLAGS + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False) else [])
+                         + (["-DHALO_VR=1"] if vr else []))
     guest_code = " ".join(GUEST_CODE_FLAGS)
     tool_implicit = [Path("tools/android_asm_convert.py"), *generated_headers]
     # profile-guided optimisation with the Linux build's profile (committed,
@@ -498,6 +542,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         "-O2", "-g", "-fPIC", "-Wall", "-Wno-unused-function", "-D_GNU_SOURCE",
         f"-I{PORT_DIR}/include", f"-I{PORT_DIR}/host", f"-I{SDL_DIR}/include", f"-I{LINUX_DIR}/src",
         f"-I{TOML_DIR}",
+        *([f"-DHALO_VR=1", f"-I{OPENXR_DIR / 'include'}"] if vr else []),
     ])
     host_sources = sorted((PORT_DIR / "host").glob("*.c")) + [
         LINUX_DIR / "src" / "posix_files.c", LINUX_DIR / "src" / "posix_net.c",
@@ -524,6 +569,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.rule(
         name="android_host_link",
         command=(f"$android_host_cc -shared -o $out $in -L{sdl_build} "
+                 + (f"-L{OPENXR_DIR / 'lib'} -lopenxr_loader " if vr else "")
                  + " ".join(f"-l{lib}" for lib in HOST_LIBRARIES)
                  + " -Wl,-z,max-page-size=16384 -Wl,--no-undefined"),
         description="ANDROID HOST LINK $out",
@@ -537,17 +583,25 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     n.rule(name="android_copy", command="cp $in $out", description="ANDROID STAGE $out")
     n.build(outputs=staged_sdl, rule="android_copy", inputs=libsdl)
     n.build(outputs=staged_image, rule="android_copy", inputs=image)
-    n.build(outputs="android", rule="phony", inputs=[libmain, staged_sdl, staged_image])
+    staged = [libmain, staged_sdl, staged_image]
+    if vr:
+        staged_openxr = jni_dir / "libopenxr_loader.so"
+        n.build(outputs=staged_openxr, rule="android_copy", inputs=OPENXR_DIR / "lib" / "libopenxr_loader.so")
+        staged.append(staged_openxr)
+    n.build(outputs="android", rule="phony", inputs=staged)
 
-    apk = PORT_DIR / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
+    # the VR build is the app's "vr" flavour (port/android/app/build.gradle)
+    apk_relative = "app/build/outputs/apk/vr/debug/app-vr-debug.apk" if vr else "app/build/outputs/apk/debug/app-debug.apk"
+    apk = PORT_DIR / apk_relative
     n.rule(
         name="android_gradle",
         # Gradle leaves the APK alone when its contents would not change
-        command=(f"cd {PORT_DIR} && ./gradlew --console=plain -q assembleDebug && "
-                 "touch app/build/outputs/apk/debug/app-debug.apk"),
+        command=(f"cd {PORT_DIR} && ./gradlew --console=plain -q "
+                 + ("-PhaloVr assembleVrDebug" if vr else "assembleDebug")
+                 + f" && touch {apk_relative}"),
         description="ANDROID GRADLE $out",
         pool="console",
     )
-    n.build(outputs=apk, rule="android_gradle", inputs=[libmain, staged_sdl, staged_image])
+    n.build(outputs=apk, rule="android_gradle", inputs=staged)
     n.build(outputs="android_apk", rule="phony", inputs=apk)
     n.newline()
