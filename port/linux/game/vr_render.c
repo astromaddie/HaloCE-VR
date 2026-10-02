@@ -11,6 +11,7 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "math/real_math.h"
 #include "cutscene/cinematics.h"
 #include "render/render_cameras.h"
+#include "game/players.h"
 
 #include "halo_vr.h"
 #include "../src/vr.h"
@@ -25,6 +26,16 @@ static struct
 	struct render_camera head_camera;
 } vr_render;
 
+/* the heading the eyes turn from: the headset's own while the head aims,
+otherwise the game camera's */
+static void view_heading(
+	struct render_camera const *camera,
+	real_vector3d *heading)
+{
+	if (!vr_heading_forward(heading->n))
+		*heading = camera->forward;
+}
+
 static void eye_camera(
 	int eye,
 	struct render_camera *camera,
@@ -33,9 +44,10 @@ static void eye_camera(
 	real aspect = (real)(camera->viewport_bounds.x1 - camera->viewport_bounds.x0) /
 		(real)(camera->viewport_bounds.y1 - camera->viewport_bounds.y0);
 	real_point3d position;
-	real_vector3d forward, up;
+	real_vector3d forward, up, heading;
 
-	vr_eye_view(eye, camera->position.n, camera->forward.n, aspect, position.n, forward.n, up.n, bounds->n);
+	view_heading(camera, &heading);
+	vr_eye_view(eye, camera->position.n, heading.n, aspect, position.n, forward.n, up.n, bounds->n);
 	camera->position = position;
 	camera->forward = forward;
 	camera->up = up;
@@ -76,8 +88,10 @@ short vr_render_windows(
 		real_point3d position;
 		real_vector3d forward, up;
 
-		if (vr_head_view(player.render_camera.position.n, player.render_camera.forward.n,
-			position.n, forward.n, up.n))
+		real_vector3d heading;
+
+		view_heading(&player.render_camera, &heading);
+		if (vr_head_view(player.render_camera.position.n, heading.n, position.n, forward.n, up.n))
 		{
 			vr_render.head_camera.position = position;
 			vr_render.head_camera.forward = forward;
@@ -119,6 +133,25 @@ void vr_render_weapon_camera(
 		camera->forward = vr_render.head_camera.forward;
 		camera->up = vr_render.head_camera.up;
 	}
+}
+
+void vr_player_control_facing(
+	short local_player_index)
+{
+	real_euler_angles2d const *angles;
+	real_vector3d forward;
+
+	if (local_player_index != local_player_get_next(NONE) || cinematic_in_progress())
+		return;
+	angles = player_control_get_facing_angles(local_player_index);
+	if (vr_aim(angles->yaw, forward.n))
+		player_control_set_facing(local_player_index, &forward);
+}
+
+int vr_render_aiming(
+	void)
+{
+	return vr_aiming();
 }
 
 #endif /* HALO_VR */

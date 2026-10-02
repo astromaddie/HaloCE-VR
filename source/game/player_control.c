@@ -209,6 +209,7 @@ symbols in this file:
 #include "units/vehicles.h"
 
 #include "real_math.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -738,6 +739,10 @@ static void handle_one_player_input(
 				input.facing_delta.yaw,
 				input.facing_delta.pitch);
 			player_control_angle_step_ticks = 1.f;
+#ifdef HALO_VR
+			/* in the headset the head aims (port/linux/game/vr_render.c) */
+			vr_player_control_facing(local_player_index);
+#endif
 		}
 
 		if (unit->object.parent_object_index == NONE)
@@ -1240,6 +1245,13 @@ static void get_local_player_input_blob(
 							{
 								control->magnetism_level = 0.f;
 							}
+#ifdef HALO_VR
+							/* nor for the head: the view must not turn under it */
+							if (vr_render_aiming())
+							{
+								control->magnetism_level = 0.f;
+							}
+#endif
 						}
 						if (player_magnetism_flag && control->magnetism_level > 0.f &&
 							(fabs(clamped_yaw) > _real_epsilon ||

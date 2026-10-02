@@ -43,6 +43,13 @@ static struct
 	/* this frame is drawn in stereo; which eyes are in their images */
 	int stereo;
 	unsigned int eyes_resolved;
+	/* the view's heading (radians about Halo's +z); 0 before the head first
+	aims or after a recentre */
+	float heading, last_aim_yaw;
+	int heading_valid, aiming, aiming_last_frame;
+	/* vr.snap_turn (radians, 0 for smooth), vr.smooth_turn_speed (radians a second) */
+	float snap_turn, smooth_turn_speed;
+	int snap_armed, recentre_held;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw;
@@ -88,6 +95,9 @@ void vr_initialize(void)
 	vr.hud_width = (float)config_real("vr.hud_width");
 	vr.stereo_enabled = config_boolean("vr.stereo");
 	vr.units_per_metre = (float)config_real("vr.world_scale");
+	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
+	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
+	vr.snap_armed = 1;
 	vr.force_render = config_boolean("vr.force_render");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.dump_frame = config_integer("vr.dump_frame");
@@ -138,6 +148,17 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 	*buttons = vr.frame.buttons;
 	memcpy(trigger, vr.frame.trigger, sizeof(vr.frame.trigger));
 	memcpy(thumb, vr.frame.thumb, sizeof(vr.frame.thumb));
+	if (vr.aiming_last_frame)
+	{
+		/* the right stick turns the heading (vr_aim), the head looks */
+		thumb[2] = thumb[3] = 0.0f;
+		/* both sticks pressed together recentre (vr_aim) */
+		if ((*buttons & (HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB)) ==
+			(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB))
+		{
+			*buttons &= ~(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB);
+		}
+	}
 	return 1;
 }
 
@@ -328,6 +349,132 @@ int vr_eye_view(int eye, const float position[3], const float forward[3], float 
 	return 1;
 }
 
+/* the head's forward in Halo's axes at heading 0 */
+static void head_forward(float out[3])
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	float local[3];
+
+	rotate(vr.frame.head.orientation, xr_forward, local);
+	to_halo(local, 1.0f, 0.0f, out);
+}
+
+static float wrap_angle(float angle)
+{
+	while (angle > 3.14159265f)
+		angle -= 6.28318531f;
+	while (angle < -3.14159265f)
+		angle += 6.28318531f;
+	return angle;
+}
+
+/* the right stick: snap turns, or smooth ones at vr.smooth_turn_speed */
+static void turn(void)
+{
+	float x = vr.frame.thumb[2];
+	double seconds = vr.frame.predicted_display_period * 1e-9;
+
+	if (!(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+		return;
+	if (vr.snap_turn > 0.0f)
+	{
+		if (vr.snap_armed && (x > 0.7f || x < -0.7f))
+		{
+			/* pushed right turns right: yaw grows to the left */
+			vr.heading = wrap_angle(vr.heading + (x > 0.0f ? -vr.snap_turn : vr.snap_turn));
+			vr.snap_armed = 0;
+		}
+		else if (x < 0.3f && x > -0.3f)
+		{
+			vr.snap_armed = 1;
+		}
+	}
+	else if (x > 0.15f || x < -0.15f)
+	{
+		vr.heading = wrap_angle(vr.heading - x * vr.smooth_turn_speed * (float)seconds);
+	}
+}
+
+int vr_aim(float game_yaw, float out_forward[3])
+{
+	const unsigned int needed = HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
+	unsigned int both = HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB;
+	float head[3], head_yaw, cosine, sine;
+
+	vr.aiming = 0;
+	if (!vr.active || !vr.stereo_enabled || !frame_begin())
+		return 0;
+	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f))
+		synthesize_views();
+	if ((vr.frame.flags & needed) != needed)
+		return 0;
+	/* both sticks pressed: the way the player faces becomes forward */
+	if ((vr.frame.buttons & both) == both)
+	{
+		if (!vr.recentre_held)
+		{
+			host_xr_recenter();
+			vr.heading_valid = 0;
+		}
+		vr.recentre_held = 1;
+	}
+	else
+	{
+		vr.recentre_held = 0;
+	}
+	head_forward(head);
+	head_yaw = atan2f(head[1], head[0]);
+	if (vr.frame.flags & HALO_XR_FRAME_RECENTRED)
+		vr.heading_valid = 0;
+	/* the game turned the player itself: the heading follows */
+	if (!vr.heading_valid || !vr.aiming_last_frame ||
+		fabsf(wrap_angle(game_yaw - vr.last_aim_yaw)) > 0.01f)
+	{
+		vr.heading = wrap_angle(game_yaw - head_yaw);
+		vr.heading_valid = 1;
+	}
+	turn();
+	/* the game limits its pitch short of straight up or down (85.5
+	degrees): so does the aim, keeping its heading */
+	{
+		float horizontal = sqrtf(head[0] * head[0] + head[1] * head[1]);
+		const float limit = 0.08f; /* cos(85.4 degrees) */
+
+		if (horizontal < limit)
+		{
+			float x = horizontal > 1e-6f ? head[0] / horizontal : 1.0f;
+			float y = horizontal > 1e-6f ? head[1] / horizontal : 0.0f;
+
+			head[0] = x * limit;
+			head[1] = y * limit;
+			head[2] = head[2] < 0.0f ? -sqrtf(1.0f - limit * limit) : sqrtf(1.0f - limit * limit);
+		}
+	}
+	cosine = cosf(vr.heading);
+	sine = sinf(vr.heading);
+	out_forward[0] = head[0] * cosine - head[1] * sine;
+	out_forward[1] = head[0] * sine + head[1] * cosine;
+	out_forward[2] = head[2];
+	vr.last_aim_yaw = atan2f(out_forward[1], out_forward[0]);
+	vr.aiming = 1;
+	return 1;
+}
+
+int vr_aiming(void)
+{
+	return vr.aiming || vr.aiming_last_frame;
+}
+
+int vr_heading_forward(float out_forward[3])
+{
+	if (!vr.heading_valid)
+		return 0;
+	out_forward[0] = cosf(vr.heading);
+	out_forward[1] = sinf(vr.heading);
+	out_forward[2] = 0.0f;
+	return 1;
+}
+
 int vr_head_view(const float position[3], const float forward[3],
 	float out_position[3], float out_forward[3], float out_up[3])
 {
@@ -437,6 +584,8 @@ void vr_present(unsigned int source, int width, int height)
 		vr.stereo_frames++;
 	vr.stereo = 0;
 	vr.eyes_resolved = 0;
+	vr.aiming_last_frame = vr.aiming;
+	vr.aiming = 0;
 }
 
 void vr_probe(void)

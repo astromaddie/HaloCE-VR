@@ -53,6 +53,22 @@ int vr_head_view(const float position[3], const float forward[3],
 at the top) into the eye's image */
 void vr_resolve_eye(int eye, unsigned int source, int width, int height);
 
+/* ---------- aiming with the head (port/linux/game/vr_render.c)
+
+The view's heading is the player's, turned by the right stick (vr.snap_turn
+or vr.smooth_turn_speed) rather than by the game: the game's facing follows
+the head. */
+
+/* begins the runtime's frame and gives the direction the player aims, for
+a game whose facing has the yaw given; 0 when the head does not aim (no
+stereo this frame). The heading takes up the game's yaw when the game
+turned the player itself (a script, a respawn, another pad's stick). */
+int vr_aim(float game_yaw, float out_forward[3]);
+/* 1 while the head aims: magnetism and the right stick leave the view alone */
+int vr_aiming(void);
+/* the heading the eyes are turned by (Halo's x, y) */
+int vr_heading_forward(float out_forward[3]);
+
 #else
 
 #define vr_active() 0
@@ -62,6 +78,7 @@ void vr_resolve_eye(int eye, unsigned int source, int width, int height);
 #define vr_present(source, width, height) ((void)0)
 #define vr_controller(buttons, trigger, thumb) 0
 #define vr_stereo_begin() 0
+#define vr_aiming() 0
 
 #endif
 

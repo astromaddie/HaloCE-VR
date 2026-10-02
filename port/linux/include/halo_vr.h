@@ -48,6 +48,10 @@ void vr_render_window_end(short window_index);
 void vr_render_frustum_bounds(union real_rectangle2d *bounds);
 /* the camera the first-person weapon is posed from: the head's in stereo */
 void vr_render_weapon_camera(struct render_camera *camera);
+/* player_control_update: the head aims the first local player (vr.h) */
+void vr_player_control_facing(short local_player_index);
+/* 1 while the head aims: no magnetism dragging the view */
+int vr_render_aiming(void);
 /* clears the target being drawn to transparent black (the HUD pass) */
 void halo_vr_clear_transparent(void);
 /* copies the back buffer into an eye's image (port/linux/src/d3d8_gl.c) */

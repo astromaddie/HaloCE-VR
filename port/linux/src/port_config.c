@@ -268,6 +268,11 @@ static const struct config_setting config_settings[] =
 		"How far ahead of the eyes the HUD floats, in metres." },
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
+	{ "vr.snap_turn", _config_real, "30.0", "HALO_VR_SNAP_TURN", _environment_value, _platform_vr,
+		"Degrees the right stick turns you at a flick; 0 turns smoothly instead." },
+	{ "vr.smooth_turn_speed", _config_real, "120.0", "HALO_VR_SMOOTH_TURN_SPEED", _environment_value, _platform_vr,
+		"With vr.snap_turn 0: degrees a second the right stick turns you at full\n"
+		"push." },
 	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
 		"Draw stereo frames with the headset off (in standby), from a head\n"
 		"looking ahead: for testing." },
