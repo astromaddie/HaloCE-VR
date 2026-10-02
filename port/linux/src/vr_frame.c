@@ -581,7 +581,7 @@ void vr_haptic(int hand, float amplitude, float seconds)
 	if (vr.haptics <= 0.0f || hand < 0 || hand > 1)
 		return;
 	amplitude *= vr.haptics;
-	vr_haptic(hand, amplitude > 1.0f ? 1.0f : amplitude, seconds);
+	host_xr_haptic((unsigned int)hand, amplitude > 1.0f ? 1.0f : amplitude, seconds);
 }
 
 unsigned int vr_take_actions(void)
