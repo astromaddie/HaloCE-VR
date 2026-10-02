@@ -139,6 +139,14 @@ unsigned int vr_take_actions(void);
 int vr_weapon_hand(void);
 /* 1 while the gun is held in both hands */
 int vr_two_handed(void);
+/* ---------- the menus' laser pointer
+
+The weapon hand points at the screen the menus are on (the flat screen,
+or the HUD's panel for the pause menu) as a mouse would: its trigger
+clicks, the right B goes back, and a dot shows where it points. */
+struct halo_ui_pointer;
+/* halo_ui_pointer_update for the headset (port/linux/include/halo_ui_pointer.h) */
+int vr_ui_pointer(int menus_active, struct halo_ui_pointer *pointer);
 /* a buzz on a hand (0 left, 1 right), scaled by vr.haptics */
 void vr_haptic(int hand, float amplitude, float seconds);
 /* the player's weapon zoom level (-1 none), for the aim's smoothing */

@@ -21,7 +21,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Aim smoothing when zoomed, haptics | Built, **not yet run on the device.** |
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
 | Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
-| Menu laser pointer | Planned. |
+| Menu laser pointer | Built, **not yet run on the device.** |
 | Comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -177,6 +177,11 @@ mirrored (`halo_vr_mirror_winding` flips the triangles' winding).
 **Weapon feel.** When zoomed, the aim is eased toward the hand's (`steady_aim`, after
 HaloCEVR's half-life formula), steadying the scope. Shots buzz the weapon hand by weapon (and the
 off hand when two-handed), scaled by `vr.haptics`.
+
+**Menus' laser pointer** (`vr_ui_pointer`, behind `halo_ui_pointer_update`). The weapon hand
+points at the screen the menus are on, as the desktop builds' mouse does: the flat screen, or
+in stereo (the pause menu) the HUD's panel. Its trigger clicks (with a tick of buzz), the right
+B goes back, and a dot on the reticle's layer shows where it points. The pad's buttons still work.
 
 **Scope** (`vr.scope`, with the hand aiming). While zoomed:
 - A pass between the eyes and the HUD (window 2, a repeat pass) renders the view along the gun.

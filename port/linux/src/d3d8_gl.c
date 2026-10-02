@@ -1202,9 +1202,14 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 #ifdef HALO_ANDROID
 int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
 {
+#ifdef HALO_VR
+	/* in the headset, the hand's laser pointer */
+	return vr_ui_pointer(menus_active, pointer);
+#else
 	(void)menus_active;
 	(void)pointer;
 	return 0;
+#endif
 }
 #else
 /* a point in the window, as SDL reports it, in the menus' coordinates: the

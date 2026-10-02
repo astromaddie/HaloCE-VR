@@ -16,6 +16,7 @@ swapchain images, whose GL texture names work in this context as they are.
 
 #include "guest_host.h"
 #include "halo_android_abi.h"
+#include "halo_ui_pointer.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -100,6 +101,14 @@ static struct
 	unsigned int actions;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
 	float reticle_distance;
+	/* the menus' pointer (vr_ui_pointer): where it last met the menus'
+	screen (LOCAL), that screen's orientation and its distance, how many
+	frames ago (0 none), its place on the 640x480 screen, its trigger's and
+	B's state */
+	float pointer_hit[3], pointer_orientation[4], pointer_distance;
+	int pointer_age;
+	short pointer_x, pointer_y;
+	int pointer_trigger, pointer_back;
 	/* the scope (vr.scope, vr.scope_size): its image this frame, and its
 	sight's shape (VR_SCOPE_*) */
 	int scope_enabled, scope_resolved, scope_shape;
@@ -1465,6 +1474,144 @@ static int copy_hud(GLuint texture)
 	return 1;
 }
 
+/* what a frame shows (vr.mode) */
+enum
+{
+	VR_MODE_FLAT,
+	VR_MODE_STEREO,
+	VR_MODE_CINEMA,
+};
+
+/* ---------- the menus' laser pointer */
+
+/* where the weapon hand's aim meets a quad of `width` x `height` metres
+at `pose` (LOCAL, facing +z): 1 with the point (LOCAL) and its place on
+the quad (0..1 from the top left) */
+static int ray_hits_quad(const struct halo_xr_pose *pose, float width, float height,
+	float hit[3], float *u, float *v, float *distance)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	const struct halo_xr_pose *aim = &vr.frame.aim[vr.weapon_hand];
+	float inverse[4], origin[3], direction[3], local_origin[3], local_direction[3], t;
+	int axis;
+
+	if (!(vr.frame.hand_valid[vr.weapon_hand] & 2) || width <= 0.0f || height <= 0.0f)
+		return 0;
+	rotate(aim->orientation, xr_forward, direction);
+	for (axis = 0; axis < 3; axis++)
+		origin[axis] = aim->position[axis] - pose->position[axis];
+	inverse[0] = -pose->orientation[0];
+	inverse[1] = -pose->orientation[1];
+	inverse[2] = -pose->orientation[2];
+	inverse[3] = pose->orientation[3];
+	rotate(inverse, origin, local_origin);
+	rotate(inverse, direction, local_direction);
+	/* from in front of it, toward it */
+	if (local_origin[2] <= 0.0f || local_direction[2] >= -1e-4f)
+		return 0;
+	t = -local_origin[2] / local_direction[2];
+	*u = (local_origin[0] + local_direction[0] * t) / width + 0.5f;
+	*v = 0.5f - (local_origin[1] + local_direction[1] * t) / height;
+	if (*u < 0.0f || *u > 1.0f || *v < 0.0f || *v > 1.0f)
+		return 0;
+	for (axis = 0; axis < 3; axis++)
+		hit[axis] = aim->position[axis] + direction[axis] * t;
+	*distance = t;
+	return 1;
+}
+
+int vr_ui_pointer(int menus_active, struct halo_ui_pointer *pointer)
+{
+	static const float trigger_on = 0.6f, trigger_off = 0.45f;
+	struct halo_xr_pose screen;
+	float width, hit[3], u, v, distance, trigger;
+	int trigger_down, back_down;
+	short x, y;
+
+	if (!vr.active || !menus_active)
+	{
+		vr.pointer_age = 0;
+		return 0;
+	}
+	/* the screen the menus are on: the flat screen, or in stereo (the
+	pause menu) the HUD's panel ahead of the head */
+	if (vr.mode == VR_MODE_STEREO)
+	{
+		static const float ahead[3] = { 0.0f, 0.0f, -1.0f };
+		float offset[3];
+		int axis;
+
+		rotate(vr.frame.head.orientation, ahead, offset);
+		memcpy(screen.orientation, vr.frame.head.orientation, sizeof(screen.orientation));
+		for (axis = 0; axis < 3; axis++)
+			screen.position[axis] = vr.frame.head.position[axis] + offset[axis] * vr.hud_distance;
+		width = vr.hud_width;
+	}
+	else if (vr.mode == VR_MODE_FLAT)
+	{
+		screen = vr.screen_pose;
+		width = vr.screen_width;
+	}
+	else
+	{
+		vr.pointer_age = 0;
+		return 0;
+	}
+	if (!ray_hits_quad(&screen, width, width * 0.75f, hit, &u, &v, &distance))
+	{
+		vr.pointer_age = 0;
+		return 0;
+	}
+	memset(pointer, 0, sizeof(*pointer));
+	x = (short)(u * 640.0f);
+	y = (short)(v * 480.0f);
+	pointer->moved = x != vr.pointer_x || y != vr.pointer_y || !vr.pointer_age;
+	pointer->x = pointer->click_x = x;
+	pointer->y = pointer->click_y = y;
+	/* the weapon hand's trigger clicks; the right B goes back */
+	trigger = vr.frame.trigger[vr.weapon_hand];
+	trigger_down = vr.pointer_trigger ? trigger > trigger_off : trigger > trigger_on;
+	if (trigger_down && !vr.pointer_trigger)
+	{
+		pointer->left_clicks = 1;
+		vr_haptic(vr.weapon_hand, 0.3f, 0.02f);
+	}
+	back_down = (vr.frame.hand_buttons[1] & HALO_XR_HAND_EAST) != 0;
+	if (back_down && !vr.pointer_back)
+		pointer->right_clicks = 1;
+	if (!vr.pointer_age || pointer->left_clicks || pointer->right_clicks)
+	{
+		platform_log("vr: pointer at %d, %d on the %s%s", x, y, vr.mode == VR_MODE_STEREO ? "HUD" : "screen",
+			pointer->left_clicks ? ", click" : pointer->right_clicks ? ", back" : "");
+	}
+	vr.pointer_trigger = trigger_down;
+	vr.pointer_back = back_down;
+	vr.pointer_x = x;
+	vr.pointer_y = y;
+	memcpy(vr.pointer_hit, hit, sizeof(hit));
+	memcpy(vr.pointer_orientation, screen.orientation, sizeof(vr.pointer_orientation));
+	vr.pointer_distance = distance;
+	vr.pointer_age = 1;
+	return 1;
+}
+
+/* the pointer's dot, on the reticle's layer, a few centimetres off the
+screen toward the hand */
+static void place_pointer(struct halo_xr_layers *layers)
+{
+	static const float toward[3] = { 0.0f, 0.0f, 1.0f };
+	float out[3];
+	int axis;
+
+	draw_reticle();
+	rotate(vr.pointer_orientation, toward, out);
+	for (axis = 0; axis < 3; axis++)
+		layers->reticle_pose.position[axis] = vr.pointer_hit[axis] + out[axis] * 0.02f;
+	memcpy(layers->reticle_pose.orientation, vr.pointer_orientation, sizeof(layers->reticle_pose.orientation));
+	layers->reticle_size[0] = layers->reticle_size[1] = 0.012f * vr.pointer_distance;
+	layers->flags |= HALO_XR_LAYER_RETICLE;
+}
+
 /* ---------- the scope */
 
 /* The scope's view, a square of the back buffer, through its sight: a
@@ -1600,13 +1747,6 @@ static void place_scope(struct halo_xr_layers *layers)
 	layers->scope_size[0] = layers->scope_size[1] = vr.scope_size;
 	layers->flags |= HALO_XR_LAYER_SCOPE;
 }
-
-enum
-{
-	VR_MODE_FLAT,
-	VR_MODE_STEREO,
-	VR_MODE_CINEMA,
-};
 
 /* seconds a change of mode takes to come in from black */
 #define VR_FADE_SECONDS 0.35f
@@ -1748,6 +1888,15 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		layers.quad_size[0] = vr.screen_width;
 		layers.quad_size[1] = vr.screen_width * 0.75f;
 	}
+	/* the menus' pointer, while it meets their screen (unless the hand's
+	reticle has the layer) */
+	if (vr.pointer_age > 0 && vr.pointer_age <= 2 && !(layers.flags & HALO_XR_LAYER_RETICLE) &&
+		(layers.flags & (HALO_XR_LAYER_QUAD | HALO_XR_LAYER_PROJECTION)))
+	{
+		place_pointer(&layers);
+	}
+	if (vr.pointer_age > 0)
+		vr.pointer_age++;
 	if (vr.fade > 0.0f && (vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER))
 	{
 		draw_fade(vr.fade);
