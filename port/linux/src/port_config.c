@@ -255,9 +255,10 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
-	{ "vr.resolution_scale", _config_real, "0.8", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
+	{ "vr.resolution_scale", _config_real, "1.5", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
 		"The game's picture in the headset as a fraction of the runtime's\n"
-		"recommended eye resolution (1728x1728 on the Steam Frame), 0.5 to 1.5." },
+		"recommended eye resolution (1728x1728 on the Steam Frame), 0.5 to 1.5;\n"
+		"1.5 (2592x2592) holds 72 frames a second on the Steam Frame." },
 	{ "vr.screen_distance", _config_real, "2.5", "HALO_VR_SCREEN_DISTANCE", _environment_value, _platform_vr,
 		"How far ahead the flat screen (menus, cutscenes) floats, in metres." },
 	{ "vr.screen_width", _config_real, "2.4", "HALO_VR_SCREEN_WIDTH", _environment_value, _platform_vr,
@@ -272,7 +273,7 @@ static const struct config_setting config_settings[] =
 		"How far ahead of the eyes the HUD floats, in metres." },
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
-	{ "vr.aim", _config_string, "\"head\"", "HALO_VR_AIM", _environment_value, _platform_vr,
+	{ "vr.aim", _config_string, "\"hand\"", "HALO_VR_AIM", _environment_value, _platform_vr,
 		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
 		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"
 		"head aims either way." },
@@ -293,6 +294,9 @@ static const struct config_setting config_settings[] =
 		"looking ahead: for testing." },
 	{ "vr.diag_yaw", _config_real, "0.0", "HALO_VR_DIAG_YAW", _environment_value, _platform_vr,
 		"With vr.force_render: turn that head left by this many degrees." },
+	{ "vr.diag_hand_yaw", _config_real, "0.0", "HALO_VR_DIAG_HAND_YAW", _environment_value, _platform_vr,
+		"With vr.force_render: turn the right hand left of the head by this many\n"
+		"degrees." },
 	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
 		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
 		"and vr-hud.bmp in the data folder; 0 none." },

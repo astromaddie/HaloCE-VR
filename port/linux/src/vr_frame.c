@@ -52,7 +52,7 @@ static struct
 	int snap_armed, recentre_held;
 	/* vr.aim = "hand": the right controller aims (else the head), and the
 	head's and the aim's yaw this frame, for the left stick */
-	int hand_aim, hand_aiming, hand_aiming_last_frame;
+	int hand_aim, hand_aiming, hand_aiming_last_frame, seated;
 	float head_yaw, aim_yaw;
 	/* the weapon's place relative to the right hand (vr.weapon_offset_*) */
 	float weapon_offset[3];
@@ -60,7 +60,7 @@ static struct
 	float reticle_distance;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
-	float diag_yaw;
+	float diag_yaw, diag_hand_yaw;
 	long dump_frame;
 	long stereo_frames;
 	/* timing (vr.timing): milliseconds summed over `timed` frames */
@@ -128,6 +128,7 @@ void vr_initialize(void)
 	vr.timing = config_boolean("vr.timing");
 	vr.gpu_finish = config_boolean("vr.timing_gpu");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
+	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.dump_frame = config_integer("vr.dump_frame");
 	if (vr.units_per_metre <= 0.0f)
 		vr.units_per_metre = 1.0f / 3.048f;
@@ -308,6 +309,24 @@ static void synthesize_views(void)
 		rotate(yaw, offset, vr.frame.eye[eye].position);
 		memcpy(vr.frame.eye[eye].orientation, yaw, sizeof(yaw));
 		memcpy(vr.frame.fov[eye], fov[eye], sizeof(fov[eye]));
+	}
+	/* hands held ahead at the hips' height, the right one turned by
+	vr.diag_hand_yaw from the head */
+	{
+		float hand_yaw = vr.diag_yaw + vr.diag_hand_yaw;
+		float turned[4] = { 0.0f, sinf(hand_yaw * 0.5f), 0.0f, cosf(hand_yaw * 0.5f) };
+		int hand;
+
+		for (hand = 0; hand < 2; hand++)
+		{
+			float offset[3] = { hand ? 0.18f : -0.18f, -0.30f, -0.35f };
+
+			rotate(yaw, offset, vr.frame.grip[hand].position);
+			memcpy(vr.frame.aim[hand].position, vr.frame.grip[hand].position, sizeof(offset));
+			memcpy(vr.frame.grip[hand].orientation, hand ? turned : yaw, sizeof(yaw));
+			memcpy(vr.frame.aim[hand].orientation, hand ? turned : yaw, sizeof(yaw));
+			vr.frame.hand_valid[hand] = 3;
+		}
 	}
 	vr.frame.flags |= HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
 }
@@ -511,13 +530,18 @@ int vr_aim(float game_yaw, int seated, float out_forward[3])
 	vr.aim_yaw = head_yaw;
 	if (vr.frame.flags & HALO_XR_FRAME_RECENTRED)
 		vr.heading_valid = 0;
-	/* the game turned the player itself: the heading follows */
-	if (!vr.heading_valid || !vr.aiming_last_frame ||
-		fabsf(wrap_angle(game_yaw - vr.last_aim_yaw)) > 0.01f)
+	/* the game turned the player itself (a script, a respawn, another pad):
+	the heading follows, so that the head faces where the game faced (the
+	hand then aims where it points). A seat limits how far its occupant
+	turns, and the game holding the aim at that limit is not a turn: in a
+	seat the heading is taken up only on getting in or out. */
+	if (!vr.heading_valid || !vr.aiming_last_frame || seated != vr.seated ||
+		(!seated && fabsf(wrap_angle(game_yaw - vr.last_aim_yaw)) > 0.01f))
 	{
-		vr.heading = wrap_angle(game_yaw - head_yaw);
+		vr.heading = wrap_angle(game_yaw - vr.head_yaw);
 		vr.heading_valid = 1;
 	}
+	vr.seated = seated;
 	turn();
 	/* the game limits its pitch short of straight up or down (85.5
 	degrees): so does the aim, keeping its heading */
@@ -900,6 +924,8 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			memcpy(layers.reticle_pose.orientation, vr.frame.head.orientation, sizeof(layers.reticle_pose.orientation));
 			layers.reticle_size[0] = layers.reticle_size[1] = 0.018f * vr.reticle_distance;
 			layers.flags |= HALO_XR_LAYER_RETICLE;
+			if (vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+				platform_log("vr: reticle %.2f m along the hand's aim", vr.reticle_distance);
 		}
 	}
 	else if ((vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER) &&
@@ -914,6 +940,10 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	}
 	if (vr.timing)
 		copied = now_ms();
+	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+		platform_log("vr: aim at the dump: %s, %s, heading %.1f, head yaw %.1f, aim yaw %.1f",
+			vr.seated ? "seated" : "on foot", vr.hand_aiming ? "hand aims" : "head aims",
+			vr.heading * 57.29578f, vr.head_yaw * 57.29578f, vr.aim_yaw * 57.29578f);
 	frame_end(&layers);
 	if (vr.timing)
 	{
