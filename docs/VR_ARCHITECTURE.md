@@ -22,6 +22,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
 | Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
 | Menu laser pointer | Built, **not yet run on the device.** |
+| Room-scale walking | Built (`vr.roomscale`, off by default), **not yet run on the device.** |
 | Comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -183,6 +184,20 @@ points at the screen the menus are on, as the desktop builds' mouse does: the fl
 in stereo (the pause menu) the HUD's panel. Its trigger clicks (with a tick of buzz), the right
 B goes back, and a dot on the reticle's layer shows where it points. The pad's buttons still work.
 
+**Room-scale** (`vr.roomscale`, off by default; after HaloCEVR's). Each tick on foot,
+`biped_update_moving` moves the player's collision pill by how far the head walked from where
+the player stands (`vr_room_step`), with `collision_move_pill`, so a step into a wall slides
+along it as walking does. Then that place to stand moves to the head.
+- The whole step is taken even where a wall stopped the player. The view stays with the player
+  rather than in the wall, and the room and the game drift apart; recentre to line them up.
+- The eyes lean from that place, blended between its last two ticks as the game's camera is
+  (`head_offset`). Walking then has no added latency and no judder at the 30 Hz ticks.
+- Vehicles, cutscenes, scripts holding the player, death and network games hold it. Walking
+  resumes from wherever the head is then, as does a jump of more than 0.5 m in a tick (tracking
+  lost, a recentre).
+- `vr.diag_walk_speed` walks the synthetic head ahead and logs how far the player went each
+  second.
+
 **Scope** (`vr.scope`, with the hand aiming). While zoomed:
 - A pass between the eyes and the HUD (window 2, a repeat pass) renders the view along the gun.
   The camera is the hand's aim, rolled with the gun and kept out of walls. Its field is the middle
@@ -224,7 +239,7 @@ B goes back, and a dot on the reticle's layer shows where it points. The pad's b
 `weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`, `vehicle_view`,
 `vehicle_steering`, `controls` ("vr"/"pad"), `move_relative` ("head"/"left"/"right"),
 `two_handed`, `left_handed`, `melee_speed`, `flashlight_distance`, `crouch_height`, `holsters`,
-`haptics`, `scope`, `scope_size` (0.06 m).
+`haptics`, `scope`, `scope_size` (0.06 m), `roomscale` (false).
 
 Diagnostics:
 - `probe_seconds`: dim colours in each eye.

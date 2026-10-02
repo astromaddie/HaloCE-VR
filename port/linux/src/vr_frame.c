@@ -113,9 +113,17 @@ static struct
 	sight's shape (VR_SCOPE_*) */
 	int scope_enabled, scope_resolved, scope_shape;
 	float scope_size;
+	/* room-scale (vr.roomscale): the floor's point the player stands on, in
+	LOCAL metres (x, z), after the last tick and the one before (frames
+	blend them as the game's camera is blended); set aside while the player
+	cannot walk (a vehicle, a cutscene), to be taken up again from where
+	the head is then */
+	int roomscale, room_held;
+	float room_previous[2], room_now[2];
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
-	float diag_yaw, diag_hand_yaw;
+	float diag_yaw, diag_hand_yaw, diag_walk_speed;
+	double diag_walk_start;
 	int diag_two_handed;
 	long dump_frame, dump_cinema_frame;
 	long stereo_frames, cinema_frames;
@@ -213,6 +221,9 @@ void vr_initialize(void)
 	vr.gpu_finish = config_boolean("vr.timing_gpu");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
+	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
+	vr.roomscale = config_boolean("vr.roomscale");
+	vr.room_held = 1;
 	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
 	vr.dump_frame = config_integer("vr.dump_frame");
 	vr.dump_cinema_frame = config_integer("vr.dump_cinema_frame");
@@ -633,6 +644,13 @@ static int frame_begin(void)
 		return 0;
 	}
 	vr.frame_begun = 1;
+	/* a recentre moves the room's origin: walking resumes from the head */
+	if (vr.frame.flags & HALO_XR_FRAME_RECENTRED)
+	{
+		vr.room_previous[0] = vr.room_now[0] = vr.frame.head.position[0];
+		vr.room_previous[1] = vr.room_now[1] = vr.frame.head.position[2];
+		vr.room_held = 1;
+	}
 	layout_controls();
 	update_gestures();
 	vr.frame_start = now_ms();
@@ -717,13 +735,33 @@ static void synthesize_views(void)
 	float yaw[4] = { 0.0f, sinf(vr.diag_yaw * 0.5f), 0.0f, cosf(vr.diag_yaw * 0.5f) };
 	int eye;
 
+	float walk[3] = { 0.0f, 0.0f, 0.0f };
+
+	/* vr.diag_walk_speed: the head walking ahead, metres a second */
+	if (vr.diag_walk_speed != 0.0f)
+	{
+		static const float ahead[3] = { 0.0f, 0.0f, -1.0f };
+		float distance;
+
+		if (vr.diag_walk_start <= 0.0)
+			vr.diag_walk_start = now_ms();
+		distance = vr.diag_walk_speed * (float)((now_ms() - vr.diag_walk_start) * 0.001);
+		rotate(yaw, ahead, walk);
+		walk[0] *= distance;
+		walk[2] *= distance;
+		walk[1] = 0.0f;
+	}
 	memset(&vr.frame.head, 0, sizeof(vr.frame.head));
 	memcpy(vr.frame.head.orientation, yaw, sizeof(yaw));
+	memcpy(vr.frame.head.position, walk, sizeof(walk));
 	for (eye = 0; eye < 2; eye++)
 	{
 		float offset[3] = { eye ? 0.032f : -0.032f, 0.0f, 0.0f };
+		int axis;
 
 		rotate(yaw, offset, vr.frame.eye[eye].position);
+		for (axis = 0; axis < 3; axis++)
+			vr.frame.eye[eye].position[axis] += walk[axis];
 		memcpy(vr.frame.eye[eye].orientation, yaw, sizeof(yaw));
 		memcpy(vr.frame.fov[eye], fov[eye], sizeof(fov[eye]));
 	}
@@ -738,7 +776,11 @@ static void synthesize_views(void)
 		{
 			float offset[3] = { hand ? 0.18f : -0.18f, -0.30f, -0.35f };
 
+			int axis;
+
 			rotate(yaw, offset, vr.frame.grip[hand].position);
+			for (axis = 0; axis < 3; axis++)
+				vr.frame.grip[hand].position[axis] += walk[axis];
 			memcpy(vr.frame.aim[hand].position, vr.frame.grip[hand].position, sizeof(offset));
 			memcpy(vr.frame.grip[hand].orientation, hand == vr.weapon_hand ? turned : yaw, sizeof(yaw));
 			memcpy(vr.frame.aim[hand].orientation, hand == vr.weapon_hand ? turned : yaw, sizeof(yaw));
@@ -764,7 +806,8 @@ int vr_stereo_begin(void)
 
 	if (!vr.active || !frame_begin())
 		return 0;
-	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f))
+	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
+		vr.diag_walk_speed != 0.0f))
 		synthesize_views();
 	vr.stereo = vr.stereo_enabled && (vr.frame.flags & needed) == needed;
 	return vr.stereo;
@@ -822,16 +865,89 @@ about as far as the body could lean (the game keeps only its own camera
 out of walls) */
 #define HEAD_REACH 0.35f
 
-/* the head's offset from the recentred origin, limited to HEAD_REACH */
+/* port/linux/game/render_interpolation.c: how far this frame is between
+the two ticks the game's camera is blended from */
+float render_interpolation_fraction(void);
+
+/* the head's offset from the recentred origin (with vr.roomscale, from the
+floor's point the player stands on, as far between its last two ticks as
+the game's camera is: walking, the camera then carries the head and the
+offset only what the last tick has not), limited to HEAD_REACH */
 static void head_offset(float out[3])
 {
-	const float *head = vr.frame.head.position;
-	float length = sqrtf(head[0] * head[0] + head[1] * head[1] + head[2] * head[2]);
-	float scale = length > HEAD_REACH ? HEAD_REACH / length : 1.0f;
+	float head[3], length, scale;
 
+	memcpy(head, vr.frame.head.position, sizeof(head));
+	if (vr.roomscale)
+	{
+		float t = render_interpolation_fraction();
+
+		head[0] -= vr.room_previous[0] + (vr.room_now[0] - vr.room_previous[0]) * t;
+		head[2] -= vr.room_previous[1] + (vr.room_now[1] - vr.room_previous[1]) * t;
+	}
+	length = sqrtf(head[0] * head[0] + head[1] * head[1] + head[2] * head[2]);
+	scale = length > HEAD_REACH ? HEAD_REACH / length : 1.0f;
 	out[0] = head[0] * scale;
 	out[1] = head[1] * scale;
 	out[2] = head[2] * scale;
+}
+
+/* ---------- room-scale (vr.roomscale), after the PC mod HaloCEVR's: each
+tick the player is moved by how far the head walked from where they stand */
+
+/* a step of more than this (metres) in a tick is no walk (tracking lost
+and found, a recentre): it is taken up without moving */
+#define ROOM_STEP_LIMIT 0.5f
+
+int vr_room_step(float out_step[2])
+{
+	float step[3], halo[3];
+	const float *head = vr.frame.head.position;
+
+	out_step[0] = out_step[1] = 0.0f;
+	if (!vr.roomscale || !vr.active || !vr.heading_valid ||
+		(vr.frame.flags & (HALO_XR_FRAME_VIEWS_VALID | HALO_XR_FRAME_RECENTRED)) != HALO_XR_FRAME_VIEWS_VALID)
+	{
+		vr_room_hold();
+		return 0;
+	}
+	if (vr.room_held)
+	{
+		vr.room_previous[0] = vr.room_now[0] = head[0];
+		vr.room_previous[1] = vr.room_now[1] = head[2];
+		vr.room_held = 0;
+		return 0;
+	}
+	step[0] = head[0] - vr.room_now[0];
+	step[1] = 0.0f;
+	step[2] = head[2] - vr.room_now[1];
+	if (step[0] * step[0] + step[2] * step[2] > ROOM_STEP_LIMIT * ROOM_STEP_LIMIT)
+	{
+		vr.room_held = 1;
+		return vr_room_step(out_step);
+	}
+	to_halo(step, cosf(vr.heading), sinf(vr.heading), halo);
+	out_step[0] = halo[0] * vr.units_per_metre;
+	out_step[1] = halo[1] * vr.units_per_metre;
+	return 1;
+}
+
+void vr_room_moved(void)
+{
+	/* the whole step is taken, even where a wall stopped the player: the
+	view stays with the player, not in the wall */
+	vr.room_previous[0] = vr.room_now[0];
+	vr.room_previous[1] = vr.room_now[1];
+	vr.room_now[0] = vr.frame.head.position[0];
+	vr.room_now[1] = vr.frame.head.position[2];
+}
+
+void vr_room_hold(void)
+{
+	/* the head leans from where the player last stood until walking resumes */
+	vr.room_previous[0] = vr.room_now[0];
+	vr.room_previous[1] = vr.room_now[1];
+	vr.room_held = 1;
 }
 
 /* a view at `offset` (LOCAL metres) turned by `orientation`, for a viewer
@@ -1059,7 +1175,8 @@ int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_headi
 	vr.hand_aiming = 0;
 	if (!vr.active || !vr.stereo_enabled || !frame_begin())
 		return 0;
-	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f))
+	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
+		vr.diag_walk_speed != 0.0f))
 		synthesize_views();
 	if ((vr.frame.flags & needed) != needed)
 		return 0;

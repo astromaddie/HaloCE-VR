@@ -275,6 +275,9 @@ symbols in this file:
 #include "render/render_debug.h"
 #include "scenario/scenario.h"
 #include "structures/structure_bsp_definitions.h"
+#ifdef HALO_VR
+#include "halo_vr.h"
+#endif
 
 /* ---------- constants */
 
@@ -3495,6 +3498,10 @@ static void biped_update_moving(
 		&physics.position,
 		&physics.height,
 		&physics.width);
+#ifdef HALO_VR
+	/* the headset's room-scale steps (port/linux/game/vr_render.c) */
+	vr_render_room_scale(biped_index, &physics.position, physics.height, physics.width);
+#endif
 	physics.minimum_normal_k = definition->biped.runtime_minimum_normal_k;
 	physics.downhill_k0 = definition->biped.runtime_downhill_k0;
 	physics.downhill_k1 = definition->biped.runtime_downhill_k1;

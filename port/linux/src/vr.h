@@ -139,6 +139,20 @@ unsigned int vr_take_actions(void);
 int vr_weapon_hand(void);
 /* 1 while the gun is held in both hands */
 int vr_two_handed(void);
+/* ---------- room-scale (vr.roomscale)
+
+Walking about the room walks the player: each tick on foot the player is
+moved by how far the head went from where they stood. */
+
+/* this tick's step (Halo's x, y in world units), 1 when there is one to
+take; the caller moves the player (as far as the world lets it) and calls
+vr_room_moved. 0 when off, untracked, or taking up a new place to stand */
+int vr_room_step(float out_step[2]);
+void vr_room_moved(void);
+/* the player cannot walk this tick (a vehicle, a cutscene, no player):
+walking resumes from wherever the head is then */
+void vr_room_hold(void);
+
 /* ---------- the menus' laser pointer
 
 The weapon hand points at the screen the menus are on (the flat screen,

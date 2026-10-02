@@ -17,6 +17,8 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "game/game.h"
 #include "objects/objects.h"
 #include "physics/collisions.h"
+#include "physics/collision_features.h"
+#include "camera/director.h"
 #include "units/units.h"
 #include "models/model_animation_definitions.h"
 #include "units/unit_definitions.h"
@@ -573,6 +575,66 @@ void vr_render_frustum_bounds(
 	}
 }
 
+void vr_render_room_scale(
+	long biped_index,
+	real_point3d *position,
+	real height,
+	real width)
+{
+	static real diag_walk = -1.0f, asked = 0.0f, walked = 0.0f;
+	static long diag_tick = NONE;
+	short local_player_index = local_player_get_next(NONE);
+	long player_index = local_player_index != NONE ? local_player_get_player_index(local_player_index) : NONE;
+	struct collision_plane collisions[16];
+	real_point3d clipped;
+	real_vector3d step, clipped_velocity;
+	float room_step[2];
+
+	if (player_index == NONE || player_get(player_index)->unit_index != biped_index || !vr_active())
+		return;
+	/* only where the player could walk by the stick (a local game; no
+	cutscene, script or death holding them) */
+	if (!vr_aiming() || cinematic_in_progress() || game_connection() != _game_connection_local ||
+		director_inhibited_input(local_player_index) ||
+		object_get(biped_index)->object.parent_object_index != NONE ||
+		TEST_FLAG(object_get(biped_index)->object.damage_flags, _object_dead_bit))
+	{
+		vr_room_hold();
+		return;
+	}
+	if (!vr_room_step(room_step))
+		return;
+	step.i = room_step[0];
+	step.j = room_step[1];
+	step.k = 0.0f;
+	/* (a second tick in a frame has the head where the first left it) */
+	if (magnitude_squared3d(&step) < 1e-10f)
+	{
+		vr_room_moved();
+		return;
+	}
+	/* the pill moved as walking moves it, sliding along what it meets */
+	collision_move_pill(_collision_test_for_bipeds_living_flags, position, &step, height, width, biped_index,
+		&clipped, &clipped_velocity, 16, collisions);
+	vr_room_moved();
+	/* vr.diag_walk_speed: how far the steps took the player each second */
+	if (diag_walk < 0.0f)
+		diag_walk = (real)config_real("vr.diag_walk_speed");
+	if (diag_walk != 0.0f)
+	{
+		asked += magnitude3d(&step);
+		walked += (real)sqrt((clipped.x - position->x) * (clipped.x - position->x) +
+			(clipped.y - position->y) * (clipped.y - position->y));
+		if (diag_tick == NONE || game_time_get() - diag_tick >= TICKS_PER_SECOND)
+		{
+			platform_log("vr: room-scale walked %.3f of %.3f units this second", walked, asked);
+			diag_tick = game_time_get();
+			asked = walked = 0.0f;
+		}
+	}
+	*position = clipped;
+}
+
 int vr_render_motion_sensor_yaw(
 	short local_player_index,
 	real *yaw)
@@ -622,12 +684,20 @@ void vr_player_control_facing(
 	long player_index, unit_index;
 	boolean seated;
 
-	if (local_player_index != local_player_get_next(NONE) || cinematic_in_progress())
+	if (local_player_index != local_player_get_next(NONE))
 		return;
+	if (cinematic_in_progress())
+	{
+		vr_room_hold();
+		return;
+	}
 	player_index = local_player_get_player_index(local_player_index);
 	unit_index = player_index != NONE ? player_get(player_index)->unit_index : NONE;
 	vr_diag_drive(unit_index);
 	vr_update_seat(unit_index);
+	/* seated, the head leans from where the player stood (vr.roomscale) */
+	if (vr_render.seat.seated)
+		vr_room_hold();
 	vr_set_zoom_level(player_control_get_zoom_level(local_player_index));
 	seated = vr_render.seat.seated;
 	angles = player_control_get_facing_angles(local_player_index);

@@ -337,6 +337,10 @@ static const struct config_setting config_settings[] =
 		"The strength of the controllers' buzz (shots, gestures), 0 to 1; 0 none." },
 	{ "vr.holsters", _config_boolean, "true", "HALO_VR_HOLSTERS", _environment_value, _platform_vr,
 		"The weapon hand's grip at either shoulder switches weapons." },
+	{ "vr.roomscale", _config_boolean, "false", "HALO_VR_ROOMSCALE", _environment_value, _platform_vr,
+		"Walking about your room walks your character (on foot, not in\n"
+		"vehicles or cutscenes). Walls stop it where they stop the character, so\n"
+		"your room and the game drift apart; recentre (hold View) to line them up." },
 	{ "vr.scope", _config_boolean, "true", "HALO_VR_SCOPE", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": a zoomed weapon shows its zoom in a scope held at\n"
 		"the gun (an extra view rendered while zoomed); your eyes stay unzoomed." },
@@ -368,6 +372,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_drive_seconds", _config_real, "0.0", "HALO_VR_DIAG_DRIVE_SECONDS", _environment_value, _platform_vr,
 		"This many seconds into play, seat the player as the nearest vehicle's\n"
 		"driver: for testing; 0 never." },
+	{ "vr.diag_walk_speed", _config_real, "0.0", "HALO_VR_DIAG_WALK_SPEED", _environment_value, _platform_vr,
+		"With vr.force_render: the synthetic head walks ahead at this speed\n"
+		"(metres a second), for testing vr.roomscale; 0 still." },
 	{ "vr.diag_zoom_seconds", _config_real, "0.0", "HALO_VR_DIAG_ZOOM_SECONDS", _environment_value, _platform_vr,
 		"This many seconds into play, zoom in (switching first to a weapon that\n"
 		"zooms): for testing the scope; 0 never." },

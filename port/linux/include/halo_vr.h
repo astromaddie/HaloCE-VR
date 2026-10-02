@@ -97,6 +97,10 @@ void halo_vr_mirror_winding(int mirrored);
 in the scope, or not at all): the first-person weapon stays in view while
 zoomed, and the HUD draws no zoom mask */
 int vr_render_unzoomed_view(void);
+/* biped_update_moving: vr.roomscale moves the first local player's pill
+(`position`, `height`, `width` as biped_get_physics_pill gives them) by
+where the head walked this tick, as far as the world lets it */
+void vr_render_room_scale(long biped_index, union real_point3d *position, real height, real width);
 /* motion_sensor_update: the yaw (radians) the first local player's motion
 sensor turns with, the head's, not the hand's aim; 0 to leave the
 facing's */
