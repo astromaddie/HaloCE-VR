@@ -39,6 +39,8 @@ THIRD_PARTY = BUILD / "third_party"
 # the TOML parser config.toml is read with (port/linux/src/port_config.c)
 TOML_DIR = Path("port/third_party/tomlc17")
 KCP_DIR = Path("port/third_party/kcp")
+# the cross-port VR library (vendored copy of ~/code/sfvr; never edited here)
+SFVR_DIR = Path("port/third_party/sfvr")
 MUSL_VERSION = "1.2.5"
 MUSL_DIR = THIRD_PARTY / f"musl-{MUSL_VERSION}"
 MUSL_URL = f"https://musl.libc.org/releases/musl-{MUSL_VERSION}.tar.gz"
@@ -235,7 +237,8 @@ def _musl_sources() -> List[Path]:
 
 
 def android_configure_inputs() -> List[Path]:
-    return [Path(__file__), PORT_DIR / "guest" / "runtime", PORT_DIR / "host", LINUX_DIR / "src", *hud_configure_inputs()]
+    return [Path(__file__), PORT_DIR / "guest" / "runtime", PORT_DIR / "host", LINUX_DIR / "src", SFVR_DIR / "src",
+            *hud_configure_inputs()]
 
 
 def generate_android_build(n: Writer, sln: Any) -> None:
@@ -448,7 +451,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         guest_abi, guest_code, "-std=gnu11", "-D_GNU_SOURCE", "-DHALO_LINUX_PLATFORM_LAYER", "-w", profile_flags,
         f"-include {prefix_header}", f"-include {platform_semantics_header}",
         f"-I{LINUX_DIR}/src", f"-I{LINUX_DIR}/include", f"-I{PORT_DIR}/guest/runtime",
-        f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{KCP_DIR}", "-Isource -Isource/cseries",
+        f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{KCP_DIR}", f"-I{SFVR_DIR}/include", "-Isource -Isource/cseries",
         f"-I{SDL_DIR}/include", f"-I{gl_include}", *libc_includes, f"-idirafter {XDK_INCLUDE}",
     ])
     guest_host_only = {"memory_watch.c"}  # replaced by guest_memory_watch.c
@@ -463,6 +466,13 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     objects.append(guest_object(TOML_DIR / "tomlc17.c", platform_cflags))
     # internet play's reliable streams (port/third_party/kcp; p2p.c)
     objects.append(guest_object(KCP_DIR / "ikcp.c", platform_cflags))
+    # the VR build's shared logic (port/third_party/sfvr: View, turn, haptics, [vr-perf], settings)
+    if vr:
+        sfvr_cflags = " ".join([
+            guest_abi, guest_code, "-std=c99", "-Wall", "-Wextra", profile_flags, f"-I{SFVR_DIR}/include", *libc_includes,
+        ])
+        for source in sorted((SFVR_DIR / "src").glob("*.c")):
+            objects.append(guest_object(source, sfvr_cflags))
     # the game's sin, pow and the rest, the same on every port
     # (port/include/halo_math.h)
     musl_math_cflags = " ".join([
