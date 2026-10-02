@@ -623,6 +623,11 @@ void first_person_weapon_render_update(
 		{
 			boolean visible= director_get_perspective(render.local_player_index)==_director_perspective_first_person &&
 				player_control_get_zoom_level(render.local_player_index)==NONE;
+#ifdef HALO_VR
+			/* put away driving or on a turret (port/linux/game/vr_render.c) */
+			if (vr_render_hide_first_person_weapon())
+				visible= FALSE;
+#endif
 
 			first_person_weapon_set_visibility(render.local_player_index, visible);
 			if (first_person_weapon->visible)

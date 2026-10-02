@@ -652,7 +652,7 @@ static int hand_forward(float out[3])
 	return 1;
 }
 
-int vr_aim(float game_yaw, int seated, float out_forward[3])
+int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_heading, float out_forward[3])
 {
 	const unsigned int needed = HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
 	unsigned int both = HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB;
@@ -682,10 +682,10 @@ int vr_aim(float game_yaw, int seated, float out_forward[3])
 	}
 	head_forward(head);
 	update_aim_pose();
-	/* the hand aims on foot; in a seat (a vehicle, a turret) the head
-	steers as the game's camera would */
+	/* the hand aims where the caller allows it (on foot; a driver's seat
+	steered by hand), the head otherwise */
 	memcpy(aim, head, sizeof(aim));
-	if (vr.hand_aim && !seated && hand_forward(aim))
+	if (vr.hand_aim && hand_may_aim && hand_forward(aim))
 		vr.hand_aiming = 1;
 	/* the heading is kept so that the aim comes out as the game had it */
 	head_yaw = atan2f(aim[1], aim[0]);
@@ -698,14 +698,23 @@ int vr_aim(float game_yaw, int seated, float out_forward[3])
 	hand then aims where it points). A seat limits how far its occupant
 	turns, and the game holding the aim at that limit is not a turn: in a
 	seat the heading is taken up only on getting in or out. */
-	if (!vr.heading_valid || !vr.aiming_last_frame || seated != vr.seated ||
-		(!seated && fabsf(wrap_angle(game_yaw - vr.last_aim_yaw)) > 0.01f))
+	if (base_heading)
 	{
-		vr.heading = wrap_angle(game_yaw - vr.head_yaw);
+		/* in a vehicle the view turns with it: the heading is the seat's */
+		vr.heading = *base_heading;
 		vr.heading_valid = 1;
 	}
+	else
+	{
+		if (!vr.heading_valid || !vr.aiming_last_frame || seated != vr.seated ||
+			(!seated && fabsf(wrap_angle(game_yaw - vr.last_aim_yaw)) > 0.01f))
+		{
+			vr.heading = wrap_angle(game_yaw - vr.head_yaw);
+			vr.heading_valid = 1;
+		}
+		turn();
+	}
 	vr.seated = seated;
-	turn();
 	/* the game limits its pitch short of straight up or down (85.5
 	degrees): so does the aim, keeping its heading */
 	{

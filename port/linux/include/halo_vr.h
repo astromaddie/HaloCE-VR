@@ -61,6 +61,12 @@ struct animation_graph;
 void vr_render_first_person_ik(struct real_matrix4x3 *matrices, struct animation_graph *graph);
 /* player_control_update: the head aims the first local player (vr.h) */
 void vr_player_control_facing(short local_player_index);
+/* vr.vehicle_view "first_person": vehicles seen from their seat, which the
+director then treats as first person (the player's body unseen) */
+int vr_render_first_person_vehicles(void);
+/* the first-person weapon is not shown: seen from a driver's or gunner's
+seat */
+int vr_render_hide_first_person_weapon(void);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
 /* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */

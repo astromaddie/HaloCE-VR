@@ -16,6 +16,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Hand-aimed weapons | Default (`vr.aim = "hand"`); verified unattended with synthetic hands. **Not yet played.** |
 | Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
 | 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
+| Vehicles: first-person seats, stick steering | Built, **not yet run on the device** (the headset went offline mid-test). `vr.vehicle_view` "first_person" (default) or "chase"; `vr.vehicle_steering` "stick" (default), "head" or "hand". |
 | Scope, comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -162,7 +163,16 @@ Diagnostics:
 - **Two-handed aiming.** With the left hand on the foregrip, the left arm snaps to the gun, but
   the gun's angle still comes from the right controller alone.
 - **Scope zoom.** It is ignored in stereo. A picture-in-picture scope would bring it back.
-- **Vehicles.** The game's chase camera is used with your head's rotation. Comfort is untested.
+- **Vehicles.** `vr.vehicle_view = "first_person"` makes the director treat every seat as first
+  person, which hides your own body. The eyes sit at your character's `head` marker. A seat's
+  camera marker is the chase camera's place, so it isn't used.
+  - The view turns with the vehicle's yaw only, keeping the horizon level. A passenger seat
+    facing aside (the Pelican's) keeps the turn it had when you sat down.
+  - The driver's right stick steers as in flat Halo, and your head only looks. Gunner seats aim
+    with your head, and the handheld weapon is hidden in driver and gunner seats.
+  - `vr.diag_drive_seconds` seats you as a driver for unattended tests; spawn a vehicle first
+    with `cheat_all_vehicles`.
+  - Untested on the device.
 - **The HUD** is a flat panel ahead of you.
 - **Comfort options** are missing: no vignette, no seated or standing height.
 - **Map loads** block the game loop. SteamVR shows its own loading state while one runs.

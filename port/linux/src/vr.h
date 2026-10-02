@@ -74,8 +74,10 @@ the head. */
 /* begins the runtime's frame and gives the direction the player aims, for
 a game whose facing has the yaw given; 0 when the head does not aim (no
 stereo this frame). The heading takes up the game's yaw when the game
-turned the player itself (a script, a respawn, another pad's stick). */
-int vr_aim(float game_yaw, int seated, float out_forward[3]);
+turned the player itself (a script, a respawn, another pad's stick), or is
+`base_heading` (radians) when given: a vehicle's seat, which the view
+turns with. The right hand aims (vr.aim "hand") only where hand_may_aim. */
+int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_heading, float out_forward[3]);
 /* 1 while the head aims: magnetism and the right stick leave the view alone */
 int vr_aiming(void);
 /* the heading the eyes are turned by (Halo's x, y) */

@@ -294,6 +294,13 @@ static const struct config_setting config_settings[] =
 		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
 		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"
 		"head aims either way." },
+	{ "vr.vehicle_view", _config_string, "\"first_person\"", "HALO_VR_VEHICLE_VIEW", _environment_value, _platform_vr,
+		"Vehicles seen from the seat, turning with the vehicle and the horizon\n"
+		"kept level (\"first_person\"), or from the game's chase camera (\"chase\")." },
+	{ "vr.vehicle_steering", _config_string, "\"stick\"", "HALO_VR_VEHICLE_STEERING", _environment_value, _platform_vr,
+		"What a driver steers with: \"stick\" (the right stick, as on a flat\n"
+		"screen; the head only looks), \"head\" (where you look) or \"hand\" (where\n"
+		"the right controller points). Gunners aim with the head." },
 	{ "vr.arms", _config_string, "\"ik\"", "HALO_VR_ARMS", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": the first-person arms. \"ik\" reaches them from the\n"
 		"shoulders to the hands (the left to the left controller, or to the gun\n"
@@ -325,6 +332,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_two_handed", _config_boolean, "false", "HALO_VR_DIAG_TWO_HANDED", _environment_value, _platform_vr,
 		"With vr.force_render: hold the left hand on the gun, ahead and a little\n"
 		"left of the right." },
+	{ "vr.diag_drive_seconds", _config_real, "0.0", "HALO_VR_DIAG_DRIVE_SECONDS", _environment_value, _platform_vr,
+		"This many seconds into play, seat the player as the nearest vehicle's\n"
+		"driver: for testing; 0 never." },
 	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
 		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
 		"and vr-hud.bmp in the data folder; 0 none." },
