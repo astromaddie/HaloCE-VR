@@ -12,7 +12,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Menus and loading on a flat screen | Done; played. |
 | Stereo gameplay with a HUD layer | Done; played. The HUD's alpha is made from its brightness. |
 | Performance | **72 Hz held at 1.5× resolution (2592² an eye)**, played. Fixed: lens-flare occlusion reads that stalled the CPU on the GPU (now asynchronous), Mesa's trace markers, per-draw buffer maps (now persistently mapped). The game thread is busy 53% of a 72 Hz frame. |
-| 90 Hz | Set in the Frame's display settings. The game thread needs about 7.3 ms of CPU a frame, against 90 Hz's 11.1 ms. **Not yet seen worn at 90.** |
+| 90 Hz | `vr.refresh_rate` defaults to 90, asked for at start (the Frame's display setting decides what is offered). The game thread needs about 7.3 ms of CPU a frame, against 90 Hz's 11.1 ms. **Not yet seen worn at 90.** If 90 is not held, the host falls back to 72 by itself (see Display rate). |
 | Hand-aimed weapons | Default (`vr.aim = "hand"`); verified unattended with synthetic hands. **Not yet played.** |
 | Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
 | 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
@@ -25,7 +25,14 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Menu laser pointer | Built, **not yet run on the device.** |
 | Room-scale walking | Built (`vr.roomscale`, off by default), **not yet run on the device.** |
 | VR settings in the pause menu | Built, **not yet run on the device.** |
+| System layer (View: short press back, 1 s recentre, 3 s recentre and standing height; the both-sticks recentre removed) | Built, **not yet run on the device.** |
+| Quit to Steam (confirm, then `xrRequestExitSession`) | Built, **not yet run on the device.** |
+| `vr.settings_version`, range clamping of numeric `vr.*` settings, the old HUD defaults migrated | Built; the config code was exercised on a computer (a fresh file, a version-0 file, clamps, the environment), **not yet on the device.** |
+| Touch and Index fallbacks: grenade and flashlight (grip with a stick click) | Built, **not yet run on the device.** |
+| Recentre from the runtime (`XrEventDataReferenceSpaceChangePending`) | Built, **not yet run on the device.** |
+| 72 Hz automatic fallback | In the host since the refresh request was added; **not yet seen to fire worn.** |
 | Comfort options, foveation | Not started. |
+| Cross-port standard (v0.1) items not done here: `turn_mode` and `snap_angle` (still `snap_turn`), vignette, seated mode and `height_offset`, `camera_shake`, the standard's settings tabs, a `dominant_hand` setting, `hud_scale` and `hud_visible`, depth layer submission | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
 
@@ -64,6 +71,14 @@ ssh steamos@10.86.200.233 'cd ~/devkit-utils && python3 steam-client-create-shor
 **The refresh rate** follows the Steam Frame's display setting: SteamVR offers the app only
 the rate it is on.
 
+**Display rate and its fallback.** `vr.refresh_rate` (default 90) is asked for at start with
+`xrRequestDisplayRefreshRateFB`, taking the highest rate the runtime offers at or below it
+(`host_xr_set_refresh_rate`). The host logs `[vr-perf]` every 10 s. While worn (focused), if a
+rate above 72 is requested and two of those windows in a row come in under 90% of it, the host
+asks for 72 instead and logs `[openxr] N Hz not held ... back to 72 Hz`. The change is for that
+run: the setting is not rewritten, and the next start asks for 90 again. 72 is the rate that
+was held at 1.5× resolution on the device.
+
 **To develop**, start **Lepton Development** from the Frame's Steam library first. Logs:
 `adb -s 127.0.0.1:5555 logcat -s halo`.
 
@@ -78,11 +93,17 @@ Ninja does not rerun Gradle when only Java sources changed (the SDL patch, for e
 - six swapchains: left eye, right eye, a quad (the flat screen or HUD), the hand's reticle, a
   fade to black, and the scope;
 - controller actions for the Frame, Touch and Index profiles;
-- recentring.
+- recentring (the origin's yaw and horizontal position, and apart from them its height, the
+  standing height; see System layer);
+- the display refresh request and its fallback;
+- the session's end (`host_xr_request_exit`).
 
-The guest calls seven functions (`host_imports_vr.list`) with plain structures
-(`halo_android_abi.h`, layout asserted on both ABIs). Swapchain images go to the guest as GL
-texture names, which it draws into directly.
+The guest calls nine functions (`host_imports_vr.list`; `host_xr_init`, `_begin_frame`,
+`_acquire`, `_release`, `_end_frame`, `_recenter(flags)`, `_set_refresh_rate`, `_haptic`,
+`_request_exit`) with plain structures (`halo_android_abi.h`, layout asserted on both ABIs).
+`host_xr_recenter` takes `HALO_XR_RECENTRE_HEIGHT` as its flag, and `host_xr_request_exit`
+adds no structure. Swapchain images go to the guest as GL texture names, which it draws into
+directly.
 
 **Guest platform layer (`port/linux/src/vr_frame.c`, `vr.h`).**
 - **Frame protocol.** The runtime's frame is begun by whichever comes first: `vr_aim`
@@ -134,7 +155,6 @@ texture names, which it draws into directly.
   the head's direction turned by the heading.
   - The right stick turns the heading, not the game: `vr.snap_turn` (30°) or
     `vr.smooth_turn_speed`.
-  - Pressing both sticks recentres.
   - When the game turns the player itself, the heading follows.
   - View magnetism is off while the head aims.
 
@@ -170,9 +190,37 @@ texture names, which it draws into directly.
   | Left stick | Move; click to crouch |
   | Right stick | Turn |
   | Menu | Pause |
-  | View | Back; held 1 s, recentre (with a buzz) |
+  | View | Back (a short press); held 1 s, recentre; held 3 s, recentre and standing height (see System layer) |
 
-While the head or hand aims, the right stick is consumed for turning.
+While the head or hand aims, the right stick is consumed for turning. Stick clicks and chords
+never do system work.
+
+**System layer** (`system_layer` in `vr_frame.c`; the cross-port standard's section 1, the
+same in both `vr.controls` layouts). The left controller's View button (on Touch and Index, its
+upper face button) and Menu:
+
+| Input | Does |
+| --- | --- |
+| Menu | The game's Start (pause). The VR settings page is in its menu |
+| View, short press | The game's Back, as the button lets go |
+| View, held 1 s | Recentre: the head's yaw becomes forward and its horizontal position the origin; the standing height is kept. A 0.6/80 ms buzz in both hands |
+| View, held 3 s | Recentre with the standing height taken again (from which crouching is measured), and a second buzz. The 1 s recentre has already happened |
+
+- The host applies a recentre at the next frame boundary (`update_recentre`, and the frame's
+  `HALO_XR_FRAME_RECENTRED` flag), when the heading, the room-scale standing point and the
+  leash HUD start again. The flat and cutscene screens are placed ahead of the head again.
+- The head's height at the recentre is also kept at the start and whenever the headset is put
+  on (focus gained).
+- The runtime's own recentre (`XrEventDataReferenceSpaceChangePending` for LOCAL) is a
+  recentre with height, applied once the runtime has moved the space.
+- The both-sticks recentre of earlier versions is gone: it also pressed crouch and melee.
+
+**Touch and Index** (fallback profiles, used only where the Frame's is not): they have no
+bumpers, so a grip held with a stick click stands for the hand's bumper (grenade for the weapon
+hand's, flashlight for the other's); the stick click alone still melees and crouches. The left
+upper face button is View, and the left lower one switches grenades. The host knows each hand's
+controller from the interaction profile changed event. **Index's Menu is bound to its system
+button, which the runtime keeps; Index has no way to pause until that is changed.**
 
 **Gestures** (`update_gestures`, either layout; injected in `handle_one_player_input`):
 
@@ -180,7 +228,7 @@ While the head or hand aims, the right stick is consumed for turning.
 | --- | --- | --- |
 | A hand swung up or down fast | Melee | `melee_speed` (2.5 m/s) |
 | Off hand at the side of the head | Flashlight | `flashlight_distance` (0.2 m) |
-| Head lowered below the height at the last recentre | Crouch (held) | `crouch_height` (0.15 m) |
+| Head lowered below the standing height | Crouch (held) | `crouch_height` (0.15 m) |
 | Weapon hand's grip at a shoulder | Switch weapons | `holsters` |
 | Off hand's grip held (with the gun) | Two-handed aim: the gun points from the weapon hand to the off hand | `two_handed` ("grip", "auto", "off") |
 | Palms together, gripping | Swap the weapon hand | |
@@ -197,10 +245,17 @@ tags in each map, so when a level's tags load the VR build adds its own, cloned 
 pause menu's: same font, colours, buttons and boxes.
 - **The pause menu** gets a fifth item, VR SETTINGS. Its button hints (B back, A select) move
   from under the list to under the mission objectives, making room.
-- **VR SETTINGS** is the pause menu's backdrop and boxes with nine settings in two columns:
-  controls (VR / Xbox), aim (hand / head), gun hand, turning (snap 30 / snap 45 / smooth),
-  room-scale, scope, vehicles (inside / chase), steering (stick / head / hand), cutscenes
-  (3D / flat).
+- **VR SETTINGS** is the pause menu's backdrop and boxes with nine settings and an item to
+  quit, in two columns of five: controls (VR / Xbox), aim (hand / head), gun hand, turning
+  (snap 30 / snap 45 / smooth), room-scale, scope, vehicles (inside / chase), steering
+  (stick / head / hand), cutscenes (3D / flat). Not in it yet: `vr.hud_mode` (config or
+  `deploy.sh --config vr.hud_mode=near`).
+- **QUIT TO STEAM** (the last item) is not a setting. A asks ("SURE? A TO QUIT"); A again within
+  five seconds calls `vr_request_exit`, which has the host call `xrRequestExitSession`. The
+  frame loop already follows the session's STOPPING (the host ends it) and EXITING states to the
+  exit in `frame_begin`, and `vr_request_exit` exits after three seconds regardless if they never
+  come. Left, another item, or the time puts it back. It does not save: the game keeps what its
+  own checkpoints have saved.
 - **Changing a setting:** A or right steps it on, left steps it back, and B returns to the pause
   menu. The laser pointer clicks them too.
 - **Saving:** each change is written into `config.toml` (`config_write_*`) and taken up at once
@@ -270,7 +325,36 @@ along it as walking does. Then that place to stand moves to the head.
 `weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`, `vehicle_view`,
 `vehicle_steering`, `controls` ("vr"/"pad"), `move_relative` ("head"/"left"/"right"),
 `two_handed`, `left_handed`, `melee_speed`, `flashlight_distance`, `crouch_height`, `holsters`,
-`haptics`, `scope`, `scope_size` (0.06 m), `roomscale` (false).
+`haptics`, `scope`, `scope_size` (0.06 m), `roomscale` (false), `settings_version` (1).
+
+**Settings file hygiene.**
+- `vr.settings_version` is written to `config.toml`. A VR file without it (from before) is
+  migrated on load: `hud_distance` and `hud_width` at their old written defaults, 15 and 10,
+  become 0 (the HUD mode's own) in the file, so they do not override `near` or `leash`. A
+  value that is not the old default is kept.
+- Every numeric `vr.*` value is clamped on load (the file and the environment) to the ranges
+  below, with a log line: `settings: vr.haptics is 7, outside 0 to 1; using 1`. The file keeps
+  what the player wrote. Defaults are unchanged. A range with "or 0" also allows 0.
+
+  | Setting | Range |
+  | --- | --- |
+  | `resolution_scale` | 0.75 to 1.5 |
+  | `refresh_rate` | 60 to 144, or 0 |
+  | `snap_turn` | 15 to 90, or 0 (smooth) |
+  | `smooth_turn_speed` | 30 to 360 |
+  | `haptics` | 0 to 1 |
+  | `hud_distance`, `hud_width` | 0.8 to 30, 0.3 to 30, or 0 (the mode's own) |
+  | `screen_distance`, `screen_width` | 0.8 to 5, 0.5 to 6 |
+  | `cinema_separation`, `_convergence`, `_distance`, `_width` | 0 to 0.1, 0.5 to 20, 1 to 10, 0.5 to 12 |
+  | `world_scale` | 0.1 to 1 |
+  | `melee_speed`, `flashlight_distance`, `crouch_height`, `scope_size` | 0 to 10, 0 to 0.5, 0 to 0.6, 0 to 0.3 |
+  | `weapon_offset_*` | -0.5 to 0.5 |
+  | diagnostics (`diag_*`, `dump_*`, `probe_seconds`) | wide, for sanity only |
+
+  The ranges of `resolution_scale`, `snap_turn`, `smooth_turn_speed` and `haptics` are the
+  cross-port standard's; the rest are limits chosen here.
+- `HALO_VR_<KEY>` in the environment overrides a key for one run (the standard's override
+  form; a few keys are named otherwise, `HALO_VR_WEAPON_RIGHT` for example).
 
 Diagnostics:
 - `probe_seconds`: dim colours in each eye.
@@ -301,7 +385,8 @@ Diagnostics:
   flat screen. The near and leash panels sit in LOCAL space at the predicted pose, so unlike
   `far` (VIEW space) they can swim by the head's prediction error. Which mode is best is
   for a wear test to say.
-- **Comfort options** are missing: no vignette, no seated or standing height.
+- **Comfort options** are missing: no vignette, no seated mode or height offset. The standing
+  height is taken at focus and by View held 3 s.
 - **Map loads** block the game loop. SteamVR shows its own loading state while one runs.
 - **Battery.** The Frame discharges even on the Mac's USB.
 
