@@ -373,6 +373,12 @@ struct gl_device
 	unsigned long counter_next;
 	unsigned long counter_active;
 	unsigned long counter_of_slot[VISIBILITY_TEST_SLOTS];
+	/* every counter as last read, and whether a test has ended since: the
+	game asks for each test's result in turn, and each read of the buffer
+	waits for the GPU (on Zink a flush and a stall too), so they are read
+	together, once a frame */
+	GLuint counter_values[VISIBILITY_TEST_SLOTS];
+	BOOL counter_values_valid;
 #else
 	/* each test's latest result, which the GPU writes (as a query buffer)
 	when the test's draws are done: the game waits for results at the start
@@ -1400,6 +1406,7 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	{
 		device.counter_of_slot[index] = device.counter_active;
 		device.query_pending[index] = TRUE;
+		device.counter_values_valid = FALSE;
 		return S_OK;
 	}
 #endif
@@ -1454,9 +1461,15 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 #ifdef HALO_ANDROID
 	if (xgpu_capabilities.atomic_counters)
 	{
-		/* reading the buffer waits for the draws that counted */
-		samples = host_gl_read_buffer_word(device.visibility_counters,
-			(unsigned int)(device.counter_of_slot[index] * sizeof(GLuint)));
+		/* reading the buffer waits for the draws that counted: all the
+		counters at once */
+		if (!device.counter_values_valid)
+		{
+			host_gl_read_buffer(device.visibility_counters, 0, sizeof(device.counter_values),
+				device.counter_values);
+			device.counter_values_valid = TRUE;
+		}
+		samples = device.counter_values[device.counter_of_slot[index]];
 		if (result)
 			*result = samples;
 		return S_OK;

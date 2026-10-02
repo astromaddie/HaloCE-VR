@@ -91,6 +91,8 @@ void host_gl_get_string(unsigned int name, int index, char *buffer, unsigned int
 int host_gl_has_extension(const char *name);
 /* a 32-bit word of a GL buffer object, waiting for the GPU */
 unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset);
+/* size bytes of a buffer object from offset, waiting for the GPU once */
+void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 /* unsynchronized write into the buffer bound to target */
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
 /* fences the GPU work queued so far as that of ring slot `slot`; waits for

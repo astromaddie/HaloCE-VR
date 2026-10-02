@@ -77,6 +77,30 @@ uint32_t host_gl_read_buffer_word(uint32_t buffer, uint32_t offset)
 	return value;
 }
 
+/* size bytes of a buffer object from offset, waiting for the GPU once for
+them all (d3d8_gl.c reads every visibility counter this way, once a frame:
+each map waits for the GPU's queue to drain, and on Mesa's Zink also
+flushes it) */
+void host_gl_read_buffer(uint32_t buffer, uint32_t offset, uint32_t size, void *data)
+{
+	GLint previous = 0;
+	const void *mapping;
+
+	glGetIntegerv(GL_COPY_READ_BUFFER_BINDING, &previous);
+	glBindBuffer(GL_COPY_READ_BUFFER, buffer);
+	mapping = glMapBufferRange(GL_COPY_READ_BUFFER, offset, size, GL_MAP_READ_BIT);
+	if (mapping)
+	{
+		memcpy(data, mapping, size);
+		glUnmapBuffer(GL_COPY_READ_BUFFER);
+	}
+	else
+	{
+		memset(data, 0, size);
+	}
+	glBindBuffer(GL_COPY_READ_BUFFER, (GLuint)previous);
+}
+
 /* The renderer streams each frame's vertices and indices into the next of
 a ring of buffers (d3d8_gl.c). A fence marks the end of each frame's work,
 and a buffer is written again only once the GPU has passed the fence of the

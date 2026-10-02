@@ -81,14 +81,14 @@ static void sample_handler(int signal_number, siginfo_t *information, void *cont
 
 static void *sampler(void *context)
 {
-	unsigned int seconds = (unsigned int)(uintptr_t)context;
+	unsigned int milliseconds = (unsigned int)(uintptr_t)context;
 
 	for (;;)
 	{
 		pid_t threads[MAXIMUM_THREADS];
 		int index;
 
-		sleep(seconds);
+		usleep(milliseconds * 1000u);
 		pthread_mutex_lock(&threads_lock);
 		memcpy(threads, guest_threads, sizeof(threads));
 		pthread_mutex_unlock(&threads_lock);
@@ -105,16 +105,17 @@ void host_debug_start_sampler(const char *setting)
 {
 	struct sigaction action;
 	pthread_t thread;
-	unsigned int seconds = setting ? (unsigned int)atoi(setting) : 0;
+	/* fractions of a second too: a profile wants many samples */
+	unsigned int milliseconds = setting ? (unsigned int)(atof(setting) * 1000.0) : 0;
 
-	if (!seconds)
+	if (!milliseconds)
 		return;
 	memset(&action, 0, sizeof(action));
 	action.sa_sigaction = sample_handler;
 	action.sa_flags = SA_SIGINFO | SA_RESTART;
 	sigemptyset(&action.sa_mask);
 	sigaction(SAMPLE_SIGNAL, &action, NULL);
-	if (pthread_create(&thread, NULL, sampler, (void *)(uintptr_t)seconds) == 0)
+	if (pthread_create(&thread, NULL, sampler, (void *)(uintptr_t)milliseconds) == 0)
 		pthread_detach(thread);
-	host_logf(HOST_LOG_INFO, "sampling guest threads every %u s", seconds);
+	host_logf(HOST_LOG_INFO, "sampling guest threads every %u ms", milliseconds);
 }

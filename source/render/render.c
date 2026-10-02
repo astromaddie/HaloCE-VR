@@ -483,6 +483,12 @@ static void render_player_frame(
 		(word)render.visible_sky_index,
 		&camera->position,
 		&render.fog);
+#ifdef HALO_VR
+	/* the headset's HUD pass draws no world: getting the planar fog would
+	leave its animation offset waiting for a structure pass that never runs
+	(structure_render_set_fog_offset asserts it is taken once a window) */
+	if (!VR_RENDER_HUD())
+#endif
 	structure_get_planar_fog((short)render.cluster_index, &render.fog);
 
 	if (render.fog.atmospheric_maximum_distance != 0.0f &&

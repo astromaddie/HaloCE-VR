@@ -112,7 +112,12 @@ public class LauncherActivity extends Activity {
     }
 
     private boolean haveData() {
-        return dataRoot != null && new File(dataRoot, "maps/ui.map").isFile();
+        if (dataRoot != null && new File(dataRoot, "maps/ui.map").isFile())
+            return true;
+        // the VR build also takes the headset's Documents/HaloCE, which a
+        // reset of the Android container keeps (port/android/host/host_main.c)
+        return BuildConfig.APPLICATION_ID.endsWith(".vr") &&
+            new File("/sdcard/Documents/HaloCE/maps/ui.map").isFile();
     }
 
     private void startGame() {
