@@ -213,7 +213,10 @@ def generate_android_build(n: Writer, sln: Any) -> None:
     import json
     config: Dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
 
-    toolchain = ndk / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64"
+    # The NDK's host prebuilts are named for the build machine (macOS ships
+    # universal binaries under darwin-x86_64).
+    host_tag = "darwin-x86_64" if sys.platform == "darwin" else "linux-x86_64"
+    toolchain = ndk / "toolchains" / "llvm" / "prebuilt" / host_tag
     sysroot_include = toolchain / "sysroot" / "usr" / "include"
     host_cc = toolchain / "bin" / f"aarch64-linux-android{ANDROID_API}-clang"
     ndk_bin = toolchain / "bin"
