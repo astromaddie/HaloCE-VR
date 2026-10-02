@@ -274,9 +274,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
 	{ "vr.refresh_rate", _config_real, "90.0", "HALO_VR_REFRESH_RATE", _environment_value, _platform_vr,
-		"The headset's display rate to ask for, in hertz (the Steam Frame offers\n"
-		"72 and 90); 0 leaves the runtime's choice. A rate above 72 that the\n"
-		"game does not hold for 20 seconds while worn falls back to 72." },
+		"The headset's display rate to ask for, in hertz: the highest the\n"
+		"runtime offers at or below it; 0 leaves the runtime's choice. SteamVR on\n"
+		"the Steam Frame offers only the rate its own display setting is on." },
 	{ "vr.cinema_3d", _config_boolean, "true", "HALO_VR_CINEMA_3D", _environment_value, _platform_vr,
 		"Show cutscenes in 3D on a large screen ahead (each eye its own\n"
 		"picture); false shows them flat." },

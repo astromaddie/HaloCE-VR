@@ -10,6 +10,10 @@
 # config.toml, e.g. --config vr.dump_frame=200.
 #
 # Before running it, start "Lepton Development" from the Frame's Steam library.
+#
+# To play without the Mac, register the build once as a Lepton devkit title, which
+# shows in the Steam library as HaloCEVR (docs/VR_ARCHITECTURE.md); deploy.sh then
+# keeps its copy of the APK up to date.
 # FRAME_HOST (default steamos@10.86.200.233) is the headset over USB networking.
 set -euo pipefail
 
@@ -76,6 +80,10 @@ fi
 
 if ((install)); then
     "$adb_bin" -s "$device" install -r "$apk" | grep -i -E 'success|fail'
+    # the Steam library's HaloCEVR title (a Lepton devkit game) runs its own copy
+    if ssh "$frame_host" 'test -d ~/devkit-game/HaloCEVR'; then
+        scp -q "$apk" "$frame_host:devkit-game/HaloCEVR/HaloCE-VR.apk" && echo "updated the HaloCEVR Steam title"
+    fi
 fi
 
 if ((launch)); then

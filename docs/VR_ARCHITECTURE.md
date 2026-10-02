@@ -12,7 +12,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Menus and loading on a flat screen | Done; played. |
 | Stereo gameplay with a HUD layer | Done; played. The HUD's alpha is made from its brightness. |
 | Performance | **72 Hz held at 1.5× resolution (2592² an eye)**, played. Fixed: lens-flare occlusion reads that stalled the CPU on the GPU (now asynchronous), Mesa's trace markers, per-draw buffer maps (now persistently mapped). The game thread is busy 53% of a 72 Hz frame. |
-| 90 Hz | Default (`vr.refresh_rate`), falls back to 72 if not held for 20 s while worn. **Not yet seen worn.** |
+| 90 Hz | Set in the Frame's display settings. The game thread needs about 7.3 ms of CPU a frame, against 90 Hz's 11.1 ms. **Not yet seen worn at 90.** |
 | Hand-aimed weapons | Default (`vr.aim = "hand"`); verified unattended with synthetic hands. **Not yet played.** |
 | Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
 | 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
@@ -44,7 +44,18 @@ tools/steam_frame/extract_maps.py "Halo.iso" /tmp/halo   # once: maps out of you
 tools/steam_frame/deploy.sh --maps /tmp/halo/maps        # copy, install, start
 ```
 
-Start **Lepton Development** from the Frame's Steam library first. Logs:
+**To play** on the headset alone, launch **HaloCEVR** from the Steam library. It is a Lepton
+devkit title running `~/devkit-game/HaloCEVR/HaloCE-VR.apk`, and `deploy.sh` refreshes that
+copy. To register it on another headset, copy the APK there, then run:
+
+```bash
+ssh steamos@10.86.200.233 'cd ~/devkit-utils && python3 steam-client-create-shortcut --parms "{\"gameid\": \"HaloCEVR\", \"directory\": \"/home/steamos/devkit-game/HaloCEVR\", \"force_appid\": \"\", \"argv\": [\"HaloCE-VR.apk\"], \"env\": {}, \"settings\": {\"steam_play\": \"1\", \"compat_tool\": \"lepton\"}, \"lepton_args\": \"\"}"'
+```
+
+**The refresh rate** follows the Steam Frame's display setting: SteamVR offers the app only
+the rate it is on.
+
+**To develop**, start **Lepton Development** from the Frame's Steam library first. Logs:
 `adb -s 127.0.0.1:5555 logcat -s halo`.
 
 Ninja does not rerun Gradle when only Java sources changed (the SDL patch, for example). Run
