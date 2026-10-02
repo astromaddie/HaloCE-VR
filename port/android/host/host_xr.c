@@ -34,6 +34,7 @@ for with HALO_XR_RECENTRE_HEIGHT, and kept by a plain recentre.
 #include <openxr/openxr_platform.h>
 
 #define FRAME_CONTROLLER_EXTENSION "XR_VALVE_frame_controller_interaction"
+#define FRAME_PROFILE "/interaction_profiles/valve/frame_controller_valve"
 #define REFRESH_RATE_EXTENSION "XR_FB_display_refresh_rate"
 
 struct swapchain
@@ -95,6 +96,9 @@ static struct
 	XrAction actions[NUMBER_OF_ACTIONS];
 	XrPath hands[2];
 	int actions_ready;
+	/* each hand's controller has a bumper (the Frame's); Touch and Index do
+	not, and a grip with a stick click stands for it (sync_input) */
+	int has_bumper[2];
 	struct swapchain swapchains[HALO_XR_SWAPCHAIN_COUNT];
 	int64_t color_format;
 	XrFrameState frame_state;
@@ -345,7 +349,9 @@ static int create_actions(void)
 		{ _action_hand_menu, "/user/hand/right/input/menu/click" },
 		{ _action_hand_view, "/user/hand/left/input/view/click" },
 	};
-	/* Touch: X/Y on the left, A/B on the right */
+	/* Touch: X/Y on the left, A/B on the right. It and Index have no
+	bumpers and no View button: the left's upper face button is View, and
+	the bumpers are a grip and a stick click together (sync_input) */
 	static const struct binding touch[] =
 	{
 		{ _action_move, "/user/hand/left/input/thumbstick" },
@@ -406,20 +412,20 @@ static int create_actions(void)
 		return 0;
 	ok &= create_action(_action_move, XR_ACTION_TYPE_VECTOR2F_INPUT, "move", "Move", 0);
 	ok &= create_action(_action_look, XR_ACTION_TYPE_VECTOR2F_INPUT, "turn", "Turn", 0);
-	ok &= create_action(_action_trigger_left, XR_ACTION_TYPE_FLOAT_INPUT, "grenade", "Throw grenade (left trigger)", 0);
-	ok &= create_action(_action_trigger_right, XR_ACTION_TYPE_FLOAT_INPUT, "fire", "Fire (right trigger)", 0);
+	ok &= create_action(_action_trigger_left, XR_ACTION_TYPE_FLOAT_INPUT, "grenade", "Left trigger (zoom; Xbox layout: throw grenade)", 0);
+	ok &= create_action(_action_trigger_right, XR_ACTION_TYPE_FLOAT_INPUT, "fire", "Right trigger (fire)", 0);
 	ok &= create_action(_action_squeeze_left, XR_ACTION_TYPE_FLOAT_INPUT, "grip_left", "Left grip", 0);
 	ok &= create_action(_action_squeeze_right, XR_ACTION_TYPE_FLOAT_INPUT, "grip_right", "Right grip", 0);
-	ok &= create_action(_action_a, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_a", "A (jump)", 0);
-	ok &= create_action(_action_b, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", "B (melee)", 0);
-	ok &= create_action(_action_x, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", "X (action, reload)", 0);
-	ok &= create_action(_action_y, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y (switch weapon)", 0);
-	ok &= create_action(_action_white, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_white", "White (flashlight)", 0);
-	ok &= create_action(_action_black, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_black", "Black (switch grenade)", 0);
-	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Start (pause)", 0);
-	ok &= create_action(_action_back, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_back", "Back (scores)", 0);
-	ok &= create_action(_action_left_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb", "Crouch (left stick)", 0);
-	ok &= create_action(_action_right_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb", "Zoom (right stick)", 0);
+	ok &= create_action(_action_a, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_a", "A, Xbox layout (jump)", 0);
+	ok &= create_action(_action_b, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", "B, Xbox layout (melee)", 0);
+	ok &= create_action(_action_x, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", "X, Xbox layout (action, reload)", 0);
+	ok &= create_action(_action_y, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y, Xbox layout (switch weapons)", 0);
+	ok &= create_action(_action_white, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_white", "Left bumper, Xbox layout (flashlight)", 0);
+	ok &= create_action(_action_black, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_black", "Right bumper, Xbox layout (switch grenades)", 0);
+	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu (pause)", 0);
+	ok &= create_action(_action_back, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_back", "View (back; Xbox layout: held 1 s recentres, 3 s also the standing height)", 0);
+	ok &= create_action(_action_left_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb", "Left stick click, Xbox layout (crouch)", 0);
+	ok &= create_action(_action_right_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb", "Right stick click, Xbox layout (zoom)", 0);
 	ok &= create_action(_action_dpad_up, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_up", "D-pad up", 0);
 	ok &= create_action(_action_dpad_down, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_down", "D-pad down", 0);
 	ok &= create_action(_action_dpad_left, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_left", "D-pad left", 0);
@@ -427,18 +433,18 @@ static int create_actions(void)
 	ok &= create_action(_action_grip_pose, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", "Hand", 1);
 	ok &= create_action(_action_aim_pose, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", "Aim", 1);
 	ok &= create_action(_action_haptic, XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic", "Vibration", 1);
-	ok &= create_action(_action_hand_south, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_south", "Lower face button", 1);
-	ok &= create_action(_action_hand_east, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_east", "Upper face button", 1);
-	ok &= create_action(_action_hand_west, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_west", "Left face button", 1);
-	ok &= create_action(_action_hand_north, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_north", "Top face button", 1);
-	ok &= create_action(_action_hand_bumper, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_bumper", "Bumper", 1);
-	ok &= create_action(_action_hand_stick, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_stick", "Stick click", 1);
-	ok &= create_action(_action_hand_menu, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_menu", "Menu", 1);
-	ok &= create_action(_action_hand_view, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_view", "View", 1);
+	ok &= create_action(_action_hand_south, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_south", "Lower face button (right: jump; left on Touch and Index: switch grenades)", 1);
+	ok &= create_action(_action_hand_east, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_east", "Upper face button (right: action, reload; left on Touch and Index: View)", 1);
+	ok &= create_action(_action_hand_west, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_west", "Left face button (switch grenades)", 1);
+	ok &= create_action(_action_hand_north, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_north", "Top face button (switch weapons)", 1);
+	ok &= create_action(_action_hand_bumper, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_bumper", "Bumper (weapon hand: throw grenade; other hand: flashlight; Touch and Index: grip and stick click together)", 1);
+	ok &= create_action(_action_hand_stick, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_stick", "Stick click (right: melee; left: crouch)", 1);
+	ok &= create_action(_action_hand_menu, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_menu", "Menu (pause)", 1);
+	ok &= create_action(_action_hand_view, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_view", "View (back; held 1 s recentres, 3 s also the standing height)", 1);
 	if (!ok)
 		return 0;
 	if (xr.frame_controller)
-		suggest("/interaction_profiles/valve/frame_controller_valve", frame, sizeof(frame) / sizeof(frame[0]));
+		suggest(FRAME_PROFILE, frame, sizeof(frame) / sizeof(frame[0]));
 	suggest("/interaction_profiles/oculus/touch_controller", touch, sizeof(touch) / sizeof(touch[0]));
 	suggest("/interaction_profiles/valve/index_controller", index_controller,
 		sizeof(index_controller) / sizeof(index_controller[0]));
@@ -566,6 +572,18 @@ static void sync_input(struct halo_xr_frame *frame)
 			{
 				if (action_boolean_hand(hand_buttons[index].action, side))
 					frame->hand_buttons[side] |= hand_buttons[index].bit;
+			}
+		}
+		/* Touch and Index have no bumpers, so grenade and flashlight would be
+		out of reach: a grip held with a stick click stands for one (the stick
+		click alone still melees and crouches) */
+		for (side = 0; side < 2; side++)
+		{
+			if (!xr.has_bumper[side] && (frame->hand_buttons[side] & HALO_XR_HAND_STICK) &&
+				frame->squeeze[side] > 0.75f)
+			{
+				frame->hand_buttons[side] &= ~(uint32_t)HALO_XR_HAND_STICK;
+				frame->hand_buttons[side] |= HALO_XR_HAND_BUMPER;
 			}
 		}
 		/* the Frame's d-pad is on its left controller */
@@ -823,6 +841,8 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 		return -1;
 	}
 	xr.actions_ready = create_actions();
+	/* (until the runtime says which controllers are held) */
+	xr.has_bumper[0] = xr.has_bumper[1] = xr.frame_controller;
 	if (!xr.actions_ready)
 		host_logf(HOST_LOG_WARN, "[openxr] controller actions unavailable");
 	xr.views[0].type = xr.views[1].type = XR_TYPE_VIEW;
@@ -903,6 +923,29 @@ static void reference_space_changing(const XrEventDataReferenceSpaceChangePendin
 	xr.recentre_not_before = change->changeTime;
 }
 
+/* which controller each hand holds: a Frame's has bumpers, the others'
+(Touch, Index) are stood for by a grip and a stick click */
+static void interaction_profile_changed(void)
+{
+	int hand;
+
+	for (hand = 0; hand < 2; hand++)
+	{
+		XrInteractionProfileState state = { XR_TYPE_INTERACTION_PROFILE_STATE };
+		char text[XR_MAX_PATH_LENGTH];
+		uint32_t length = 0;
+
+		if (xr.actions_ready && XR_SUCCEEDED(xrGetCurrentInteractionProfile(xr.session, xr.hands[hand], &state)) &&
+			state.interactionProfile != XR_NULL_PATH &&
+			XR_SUCCEEDED(xrPathToString(xr.instance, state.interactionProfile, sizeof(text), &length, text)))
+		{
+			xr.has_bumper[hand] = !strcmp(text, FRAME_PROFILE);
+			host_logf(HOST_LOG_INFO, "[openxr] %s hand: %s%s", hand ? "right" : "left", text,
+				xr.has_bumper[hand] ? "" : " (grip and stick click stand for a bumper)");
+		}
+	}
+}
+
 static void poll_events(void)
 {
 	XrEventDataBuffer event = { XR_TYPE_EVENT_DATA_BUFFER };
@@ -913,6 +956,8 @@ static void poll_events(void)
 			session_state_changed(((const XrEventDataSessionStateChanged *)&event)->state);
 		else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING)
 			xr.exiting = 1;
+		else if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED)
+			interaction_profile_changed();
 		else if (event.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
 			reference_space_changing((const XrEventDataReferenceSpaceChangePending *)&event);
 		event.type = XR_TYPE_EVENT_DATA_BUFFER;
