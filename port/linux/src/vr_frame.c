@@ -285,7 +285,7 @@ void vr_initialize(void)
 	{
 		double scale = config_real("vr.resolution_scale");
 
-		if (scale < 0.5) scale = 0.5;
+		if (scale < 0.75) scale = 0.75;
 		if (scale > 1.5) scale = 1.5;
 		vr.eye_size = (int)(vr.info.width[HALO_XR_SWAPCHAIN_LEFT] * scale) & ~1;
 	}

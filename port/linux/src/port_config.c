@@ -6,8 +6,13 @@ The native ports' settings (port_config.h), parsed with tomlc17
 type, default, the HALO_* environment variable that overrides it and the
 comment written into a new file. The file is read once, on the first
 question; unknown keys and values of the wrong type are reported in the log
-and the defaults used instead, and the file itself is never rewritten once
-it exists, so that the player's edits and comments stay.
+and the defaults used instead, and so are the VR build's numbers outside
+their ranges (clamped, with a log line). A new file is written with the
+defaults. An existing file is only added to or edited line by line, so that
+the player's edits and comments stay: settings new in this version are added
+at their defaults (config_add_missing), an older VR file's settings are
+migrated by vr.settings_version (config_migrate), and the pause menu's
+settings rewrite their own lines (config_write_*).
 */
 
 #include "platform.h"
@@ -255,9 +260,13 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
+	{ "vr.settings_version", _config_integer, "1", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
+		"The version of these settings' meaning, kept by the game to bring an\n"
+		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
+		"the HUD mode's own). Leave it be." },
 	{ "vr.resolution_scale", _config_real, "1.5", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
 		"The game's picture in the headset as a fraction of the runtime's\n"
-		"recommended eye resolution (1728x1728 on the Steam Frame), 0.5 to 1.5;\n"
+		"recommended eye resolution (1728x1728 on the Steam Frame), 0.75 to 1.5;\n"
 		"1.5 (2592x2592) holds 72 frames a second on the Steam Frame." },
 	{ "vr.screen_distance", _config_real, "2.5", "HALO_VR_SCREEN_DISTANCE", _environment_value, _platform_vr,
 		"How far ahead the flat screen (menus, cutscenes) floats, in metres." },
@@ -305,7 +314,8 @@ static const struct config_setting config_settings[] =
 		"The controllers' layout. \"vr\": right trigger fire, left trigger zoom, A\n"
 		"jump, B reload and action, X switch grenades, Y switch weapons, right\n"
 		"bumper grenade, left bumper flashlight, right stick click melee, left\n"
-		"stick click crouch, menu pause, view back (held a second, recentre).\n"
+		"stick click crouch, menu pause, view back (held 1 s, recentre; held 3 s, also take your\n"
+		"standing height).\n"
 		"\"pad\": as an Xbox controller." },
 	{ "vr.move_relative", _config_string, "\"head\"", "HALO_VR_MOVE_RELATIVE", _environment_value, _platform_vr,
 		"What the left stick moves you relative to: \"head\", or where the\n"
@@ -340,7 +350,8 @@ static const struct config_setting config_settings[] =
 		"The off hand brought this close (metres) to the middle of the head\n"
 		"turns the flashlight on or off; 0 turns the gesture off." },
 	{ "vr.crouch_height", _config_real, "0.15", "HALO_VR_CROUCH_HEIGHT", _environment_value, _platform_vr,
-		"Ducking this far (metres) below your height at the last recentre\n"
+		"Ducking this far (metres) below your standing height (taken when you\n"
+		"put the headset on and when View is held 3 s)\n"
 		"crouches; 0 turns it off." },
 	{ "vr.haptics", _config_real, "1.0", "HALO_VR_HAPTICS", _environment_value, _platform_vr,
 		"The strength of the controllers' buzz (shots, gestures), 0 to 1; 0 none." },
@@ -820,6 +831,143 @@ static void config_report_unknown_keys(toml_datum_t table)
 	}
 }
 
+static char *config_edit_text(const char *input, const char *name, const char *written_value);
+
+/* ---------- ranges (the VR build's numbers) */
+
+/* The range of each numeric VR setting; one outside it is clamped when the
+settings load (from the file or the environment), with a log line. Ranges
+are the cross-port standard's where it gives one (resolution_scale 0.75 to
+1.5, snap angles 15 to 90 degrees, smooth turn 30 to 360 degrees a second,
+haptics 0 to 1, the menu distances of Meta's and Microsoft's guidance), and
+otherwise what the setting can sensibly be. `or_zero` also allows 0, which
+means off or the default where the setting says so. */
+static const struct config_range
+{
+	const char *name;
+	double minimum, maximum;
+	int or_zero;
+} config_ranges[] =
+{
+	{ "vr.resolution_scale", 0.75, 1.5, 0 },
+	{ "vr.screen_distance", 0.8, 5.0, 0 },
+	{ "vr.screen_width", 0.5, 6.0, 0 },
+	{ "vr.world_scale", 0.1, 1.0, 0 },
+	{ "vr.hud_distance", 0.8, 30.0, 1 },
+	{ "vr.hud_width", 0.3, 30.0, 1 },
+	{ "vr.refresh_rate", 60.0, 144.0, 1 },
+	{ "vr.cinema_separation", 0.0, 0.1, 0 },
+	{ "vr.cinema_convergence", 0.5, 20.0, 0 },
+	{ "vr.cinema_distance", 1.0, 10.0, 0 },
+	{ "vr.cinema_width", 0.5, 12.0, 0 },
+	{ "vr.melee_speed", 0.0, 10.0, 0 },
+	{ "vr.flashlight_distance", 0.0, 0.5, 0 },
+	{ "vr.crouch_height", 0.0, 0.6, 0 },
+	{ "vr.haptics", 0.0, 1.0, 0 },
+	{ "vr.scope_size", 0.0, 0.3, 0 },
+	{ "vr.weapon_offset_right", -0.5, 0.5, 0 },
+	{ "vr.weapon_offset_up", -0.5, 0.5, 0 },
+	{ "vr.weapon_offset_back", -0.5, 0.5, 0 },
+	{ "vr.snap_turn", 15.0, 90.0, 1 },
+	{ "vr.smooth_turn_speed", 30.0, 360.0, 0 },
+	{ "vr.diag_yaw", -360.0, 360.0, 0 },
+	{ "vr.diag_hand_yaw", -180.0, 180.0, 0 },
+	{ "vr.diag_drive_seconds", 0.0, 3600.0, 0 },
+	{ "vr.diag_walk_speed", -3.0, 3.0, 0 },
+	{ "vr.diag_zoom_seconds", 0.0, 3600.0, 0 },
+	{ "vr.dump_frame", 0.0, 1000000.0, 0 },
+	{ "vr.dump_cinema_frame", 0.0, 1000000.0, 0 },
+	{ "vr.probe_seconds", 0.0, 3600.0, 0 },
+};
+
+static void config_clamp_ranges(void)
+{
+	size_t range_index;
+
+	for (range_index = 0; range_index < sizeof(config_ranges) / sizeof(config_ranges[0]); range_index++)
+	{
+		const struct config_range *range = &config_ranges[range_index];
+		long index = config_setting_index(range->name);
+		struct config_value *value;
+		double number, clamped;
+
+		if (index < 0 || !(config_settings[index].platforms & CONFIG_PLATFORM))
+			continue;
+		value = &config_values[index];
+		number = config_settings[index].type == _config_integer ? (double)value->integer : value->real;
+		clamped = number;
+		/* (a number that is no number fails the first test) */
+		if (!(range->or_zero && number == 0.0))
+		{
+			if (!(number >= range->minimum))
+				clamped = range->minimum;
+			else if (number > range->maximum)
+				clamped = range->maximum;
+		}
+		if (clamped == number)
+			continue;
+		platform_log("settings: %s is %g, outside %g to %g%s; using %g", range->name, number, range->minimum,
+			range->maximum, range->or_zero ? " (or 0)" : "", clamped);
+		if (config_settings[index].type == _config_integer)
+			value->integer = (long)clamped;
+		else
+			value->real = clamped;
+	}
+}
+
+/* ---------- versions */
+
+/* the meaning of the VR settings now (vr.settings_version) */
+#define CONFIG_VR_SETTINGS_VERSION 1
+
+/* Brings an older file's VR settings up to date, in the text and in
+config_values (already read from it): the file's version, 0 for a file from
+before there was one, to CONFIG_VR_SETTINGS_VERSION. The version's own line
+is added with the other missing settings (config_add_missing). Returns the
+edited text, or NULL if nothing changed. Versions:
+0 to 1: vr.hud_distance and vr.hud_width were written at 15 and 10 and are
+now 0 (the HUD mode's own), as an old default would otherwise override the
+near and leash modes. */
+static char *config_migrate(const char *text, toml_datum_t table)
+{
+	static const struct { const char *name; double old_default; } hud[] =
+	{
+		{ "vr.hud_distance", 15.0 },
+		{ "vr.hud_width", 10.0 },
+	};
+	toml_datum_t version = toml_seek(table, "vr.settings_version");
+	char *result = NULL;
+	size_t item;
+
+	if (!(CONFIG_PLATFORM & _platform_vr))
+		return NULL;
+	if (version.type == TOML_INT64 && version.u.int64 > CONFIG_VR_SETTINGS_VERSION)
+	{
+		platform_log("settings: vr.settings_version %lld is newer than this version's %d; reading it as it is",
+			(long long)version.u.int64, CONFIG_VR_SETTINGS_VERSION);
+		return NULL;
+	}
+	if (version.type == TOML_INT64 && version.u.int64 >= 1)
+		return NULL;
+	for (item = 0; item < sizeof(hud) / sizeof(hud[0]); item++)
+	{
+		long index = config_setting_index(hud[item].name);
+		char *edited;
+
+		if (index < 0 || config_values[index].real != hud[item].old_default)
+			continue;
+		edited = config_edit_text(result ? result : text, hud[item].name, "0.0");
+		if (!edited)
+			continue;
+		free(result);
+		result = edited;
+		config_values[index].real = 0.0;
+		platform_log("settings: %s was the old default %g: now 0 (the HUD mode's own)", hud[item].name,
+			hud[item].old_default);
+	}
+	return result;
+}
+
 static void config_load(void)
 {
 	char path[1024];
@@ -852,16 +1000,18 @@ static void config_load(void)
 
 		if (result.ok)
 		{
-			char *completed;
+			char *migrated, *completed;
 
 			for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 				config_set_from_file(&config_values[index], &config_settings[index], result.toptab);
 			config_report_unknown_keys(result.toptab);
 			platform_log("settings: %s", path);
-			completed = config_add_missing(text, result.toptab);
-			if (completed && !config_write_file(path, completed))
+			migrated = config_migrate(text, result.toptab);
+			completed = config_add_missing(migrated ? migrated : text, result.toptab);
+			if ((completed || migrated) && !config_write_file(path, completed ? completed : migrated))
 				platform_log("settings: cannot write %s", path);
 			free(completed);
+			free(migrated);
 		}
 		else
 		{
@@ -901,6 +1051,7 @@ static void config_load(void)
 			break;
 		}
 	}
+	config_clamp_ranges();
 }
 
 static const struct config_value *config_value(const char *name, enum config_type type)
@@ -958,33 +1109,24 @@ static int config_line_section(const char *line, const char *end, char *section,
 	return 1;
 }
 
-/* sets a setting of the type given, for now and in config.toml: its line
-there is changed (or added), the rest of the file kept as it is. `value`
-is the setting as text, `written` as the file holds it (a string quoted) */
-static int config_write(const char *name, enum config_type type, const char *value, const char *written_value)
+/* `input` (a config file's text) with the setting `name`'s line made
+"key = written_value": that line replaced, or added at the end of its section
+(or of a section made for it), the rest as it is. A new string, NULL when
+memory runs out */
+static char *config_edit_text(const char *input, const char *name, const char *written_value)
 {
 	const char *dot = strchr(name, '.');
-	long index = config_setting_index(name);
-	char section[64], key[64], wanted[80], current[64] = "", line_text[256], path[1024];
+	char section[64], key[64], current[64] = "", line_text[256];
 	struct config_text out = { 0 };
-	size_t size = 0;
-	char *text;
 	const char *line;
-	int written = 0, in_section = 0, succeeded;
+	int written = 0, in_section = 0;
 
-	if (index < 0 || config_settings[index].type != type || !dot || (size_t)(dot - name) >= sizeof(section))
-		return 0;
-	/* (the file read first, as the other settings are) */
-	config_value(name, type);
-	pthread_mutex_lock(&config_lock);
-	config_set_from_text(&config_values[index], type, value);
+	if (!dot || (size_t)(dot - name) >= sizeof(section))
+		return NULL;
 	snprintf(section, sizeof(section), "%.*s", (int)(dot - name), name);
 	snprintf(key, sizeof(key), "%s", dot + 1);
 	snprintf(line_text, sizeof(line_text), "%s = %s\n", key, written_value);
-	snprintf(wanted, sizeof(wanted), "%s", section);
-	config_path(path, sizeof(path));
-	text = config_read_file(path, &size);
-	for (line = text ? text : ""; *line;)
+	for (line = input; *line;)
 	{
 		const char *end = line + strcspn(line, "\n");
 		const char *next = *end ? end + 1 : end;
@@ -997,7 +1139,7 @@ static int config_write(const char *name, enum config_type type, const char *val
 				config_append(&out, line_text);
 				written = 1;
 			}
-			in_section = !strcmp(current, wanted);
+			in_section = !strcmp(current, section);
 		}
 		else if (in_section && !written && config_line_key(line, end, key))
 		{
@@ -1030,9 +1172,33 @@ static int config_write(const char *name, enum config_type type, const char *val
 		}
 		config_append(&out, line_text);
 	}
-	succeeded = out.buffer && config_write_file(path, out.buffer);
+	return out.buffer;
+}
+
+/* sets a setting of the type given, for now and in config.toml: its line
+there is changed (or added), the rest of the file kept as it is. `value`
+is the setting as text, `written` as the file holds it (a string quoted) */
+static int config_write(const char *name, enum config_type type, const char *value, const char *written_value)
+{
+	const char *dot = strchr(name, '.');
+	long index = config_setting_index(name);
+	char path[1024];
+	size_t size = 0;
+	char *text, *edited;
+	int succeeded;
+
+	if (index < 0 || config_settings[index].type != type || !dot)
+		return 0;
+	/* (the file read first, as the other settings are) */
+	config_value(name, type);
+	pthread_mutex_lock(&config_lock);
+	config_set_from_text(&config_values[index], type, value);
+	config_path(path, sizeof(path));
+	text = config_read_file(path, &size);
+	edited = config_edit_text(text ? text : "", name, written_value);
+	succeeded = edited && config_write_file(path, edited);
 	pthread_mutex_unlock(&config_lock);
-	free(out.buffer);
+	free(edited);
 	free(text);
 	return succeeded;
 }
