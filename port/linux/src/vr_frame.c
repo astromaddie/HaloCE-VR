@@ -15,6 +15,7 @@ swapchain images, whose GL texture names work in this context as they are.
 #include "vr.h"
 
 #include "guest_host.h"
+#include "sfvr/sfvr.h"
 #include "halo_android_abi.h"
 #include "halo_ui_pointer.h"
 
@@ -66,9 +67,9 @@ static struct
 	aims or after a recentre */
 	float heading, last_aim_yaw;
 	int heading_valid, aiming, aiming_last_frame;
-	/* vr.snap_turn (radians, 0 for smooth), vr.smooth_turn_speed (radians a second) */
-	float snap_turn, smooth_turn_speed;
-	int snap_armed;
+	/* vr.turn_mode, vr.snap_angle and vr.smooth_turn_speed, turned by sfvr_turn_update */
+	sfvr_turn_config turn_config;
+	sfvr_turn_state turn_state;
 	/* vr.aim = "hand": the right controller aims (else the head), and the
 	head's and the aim's yaw this frame, for the left stick */
 	int hand_aim, hand_aiming, hand_aiming_last_frame, seated;
@@ -85,8 +86,8 @@ static struct
 	int layout_vr;
 	unsigned int pad_buttons;
 	float pad_trigger[2];
-	double view_held;
-	int view_recentred, view_recalibrated, back_pulse, zoom_down;
+	sfvr_view_button view_button;
+	int back_pulse, zoom_down;
 	int move_relative; /* 0 head, 1 left hand, 2 right hand */
 	/* the hand that holds the weapon (vr.left_handed; swapped by bringing
 	the palms together and gripping) */
@@ -104,8 +105,11 @@ static struct
 	HaloCEVR's: its direction, eased toward the hand's */
 	int zoom_level, smoothed_valid;
 	float smoothed[3];
-	/* vr.haptics: the strength of every buzz */
+	/* vr.haptics: the strength of every buzz, which are queued as they are asked
+	for (vr_haptic) and played once a frame, the strongest of those overlapping
+	(sfvr_haptic_queue) */
 	float haptics;
+	sfvr_haptic_queue haptic_queue;
 	/* vr_request_exit: when to exit regardless (monotonic milliseconds), 0 not asked */
 	double exit_deadline;
 	/* what the gestures ask of the game, for it to take (vr_take_actions) */
@@ -140,10 +144,14 @@ static struct
 	int diag_two_handed;
 	long dump_frame, dump_cinema_frame;
 	long stereo_frames, cinema_frames;
-	/* timing (vr.timing): milliseconds summed over `timed` frames */
+	/* timing: vr.timing shortens the [vr-perf] window, vr.timing_gpu waits for the
+	GPU each frame to time it. This frame's passes (left eye, right eye, HUD,
+	scope) and the [vr-perf] window (sfvr_perf); the last frame's display time
+	(nanoseconds), for the frames missed */
 	int timing, gpu_finish;
-	double frame_start, pass_start, wait_ms, frame_ms, pass_ms[4], gpu_ms, copy_ms, end_ms;
-	long timed;
+	double frame_start, pass_start, pass_ms[4];
+	sfvr_perf perf;
+	long long last_display_time;
 } vr;
 
 #include <time.h>
@@ -222,8 +230,16 @@ void vr_reload_settings(void)
 	static int left_handed = -1;
 
 	vr.cinema_enabled = config_boolean("vr.cinema_3d");
-	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
-	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
+	if (strcmp(config_string("vr.turn_mode"), "snap") && strcmp(config_string("vr.turn_mode"), "smooth") &&
+		strcmp(config_string("vr.turn_mode"), "off"))
+	{
+		platform_log("vr: vr.turn_mode \"%s\" is none of snap, smooth or off; using snap", config_string("vr.turn_mode"));
+	}
+	sfvr_turn_config_default(&vr.turn_config);
+	vr.turn_config.mode = (sfvr_turn_mode)sfvr_settings_parse_enum(sfvr_settings_find("turn_mode"),
+		config_string("vr.turn_mode"));
+	vr.turn_config.snap_angle_deg = (float)sfvr_turn_normalise_snap_angle((float)config_integer("vr.snap_angle"));
+	vr.turn_config.smooth_speed_dps = sfvr_turn_normalise_smooth_speed((float)config_real("vr.smooth_turn_speed"));
 	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
 	vr.layout_vr = strcmp(config_string("vr.controls"), "pad") != 0;
 	vr.move_relative = !strcmp(config_string("vr.move_relative"), "left") ? 1 :
@@ -301,7 +317,7 @@ void vr_initialize(void)
 	vr.cinema_width = (float)config_real("vr.cinema_width");
 	vr.mode = -1;
 	vr.units_per_metre = (float)config_real("vr.world_scale");
-	vr.snap_armed = 1;
+	sfvr_turn_reset(&vr.turn_state);
 	vr.weapon_hand = config_boolean("vr.left_handed") ? 0 : 1;
 	vr_reload_settings();
 	vr.zoom_level = -1;
@@ -312,6 +328,11 @@ void vr_initialize(void)
 	vr.force_render = config_boolean("vr.force_render");
 	vr.timing = config_boolean("vr.timing");
 	vr.gpu_finish = config_boolean("vr.timing_gpu");
+	{
+		static const char *const stages[] = { "game", "render", "copy", "end" };
+
+		sfvr_perf_init(&vr.perf, vr.timing ? 2.0 : SFVR_PERF_DEFAULT_WINDOW_S, stages, 4);
+	}
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
@@ -371,46 +392,40 @@ static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
 static void look_rotation(const float forward[3], const float up[3], float out[4]);
 
-/* The system layer (the same in every port): View, the left controller's
-(Touch and Index: its upper face button), goes back on a short press (as the
-button lets go); held 1 s it recentres (yaw and horizontal position, the
-standing height kept) with a buzz in both hands; held 3 s it recentres and
-recalibrates the standing height (and so the crouch reference) with another
-buzz. Menu is the game's Start (layout_controls). Stick clicks and chords
-stay game actions. */
+/* The system layer (the same in every port; the timing is sfvr_view's): View,
+the left controller's (Touch and Index: its upper face button), goes back on a
+short press (as the button lets go); held 1 s it recentres (yaw and horizontal
+position, the standing height kept) with a buzz in both hands; held 3 s it
+recentres and recalibrates the standing height (and so the crouch reference)
+with another buzz. Menu is the game's Start (layout_controls). Stick clicks and
+chords stay game actions. */
 static void system_layer(unsigned int left)
 {
-	double seconds = vr.frame.predicted_display_period * 1e-9;
+	unsigned int events;
 
-	if ((left & (HALO_XR_HAND_VIEW | HALO_XR_HAND_EAST)) && (vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+	/* (a press cut short by losing focus counts for nothing) */
+	if (!(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
 	{
-		vr.view_held += seconds;
-		if (vr.view_held >= 1.0 && !vr.view_recentred)
-		{
-			host_xr_recenter(0);
-			vr.heading_valid = 0;
-			vr.view_recentred = 1;
-			platform_log("vr: recentre (View held 1 s)");
-			vr_haptic(0, 0.6f, 0.08f);
-			vr_haptic(1, 0.6f, 0.08f);
-		}
-		if (vr.view_held >= 3.0 && !vr.view_recalibrated)
-		{
-			host_xr_recenter(HALO_XR_RECENTRE_HEIGHT);
-			vr.heading_valid = 0;
-			vr.view_recalibrated = 1;
-			platform_log("vr: recentre and standing height (View held 3 s)");
-			vr_haptic(0, 0.6f, 0.08f);
-			vr_haptic(1, 0.6f, 0.08f);
-		}
+		sfvr_view_reset(&vr.view_button);
+		return;
 	}
-	else
+	events = sfvr_view_update(&vr.view_button, NULL, (left & (HALO_XR_HAND_VIEW | HALO_XR_HAND_EAST)) != 0,
+		now_ms() * 0.001);
+	if (events & SFVR_VIEW_SHORT_PRESS)
+		vr.back_pulse = 2;
+	if (events & SFVR_VIEW_RECENTRE)
 	{
-		if (vr.view_held > 0.0 && !vr.view_recentred && (vr.frame.flags & HALO_XR_FRAME_FOCUSED))
-			vr.back_pulse = 2;
-		vr.view_held = 0.0;
-		vr.view_recentred = 0;
-		vr.view_recalibrated = 0;
+		host_xr_recenter(0);
+		vr.heading_valid = 0;
+		platform_log("vr: recentre (View held 1 s)");
+		sfvr_haptic_event(&vr.haptic_queue, SFVR_HAND_BOTH, SFVR_HAPTIC_SYSTEM);
+	}
+	if (events & SFVR_VIEW_RECALIBRATE_HEIGHT)
+	{
+		host_xr_recenter(HALO_XR_RECENTRE_HEIGHT);
+		vr.heading_valid = 0;
+		platform_log("vr: recentre and standing height (View held 3 s)");
+		sfvr_haptic_event(&vr.haptic_queue, SFVR_HAND_BOTH, SFVR_HAPTIC_SYSTEM);
 	}
 }
 
@@ -671,12 +686,17 @@ int vr_two_handed(void)
 	return vr.two_handed;
 }
 
+/* a buzz asked for, played with the frame's others by vr_present (vr.haptics
+scales them there) */
 void vr_haptic(int hand, float amplitude, float seconds)
 {
-	if (vr.haptics <= 0.0f || hand < 0 || hand > 1)
-		return;
-	amplitude *= vr.haptics;
-	host_xr_haptic((unsigned int)hand, amplitude > 1.0f ? 1.0f : amplitude, seconds);
+	sfvr_haptic_submit(&vr.haptic_queue, hand, amplitude, seconds);
+}
+
+static void play_haptic(int hand, float amplitude, float seconds, void *user)
+{
+	(void)user;
+	host_xr_haptic((unsigned int)hand, amplitude, seconds);
 }
 
 unsigned int vr_take_actions(void)
@@ -777,7 +797,6 @@ static int frame_begin(void)
 	layout_controls();
 	update_gestures();
 	vr.frame_start = now_ms();
-	vr.wait_ms += vr.frame_start - start;
 	return 1;
 }
 
@@ -788,7 +807,7 @@ void vr_pass_mark(int pass, int end)
 	/* the scope's pass (5) is timed in the fourth slot */
 	if (pass == 5)
 		pass = 3;
-	if (!vr.timing || pass < 0 || pass > 3)
+	if (pass < 0 || pass > 3)
 		return;
 	now = now_ms();
 	if (end)
@@ -1140,31 +1159,19 @@ static float wrap_angle(float angle)
 	return angle;
 }
 
-/* the right stick: snap turns, or smooth ones at vr.smooth_turn_speed */
+/* the right stick: snap turns, or smooth ones, or none (vr.turn_mode;
+sfvr_turn_update). Its delta is degrees, positive to the right, and the
+heading's yaw grows to the left */
 static void turn(void)
 {
-	float x = vr.frame.thumb[2];
-	double seconds = vr.frame.predicted_display_period * 1e-9;
+	float delta;
 
 	if (!(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
 		return;
-	if (vr.snap_turn > 0.0f)
-	{
-		if (vr.snap_armed && (x > 0.7f || x < -0.7f))
-		{
-			/* pushed right turns right: yaw grows to the left */
-			vr.heading = wrap_angle(vr.heading + (x > 0.0f ? -vr.snap_turn : vr.snap_turn));
-			vr.snap_armed = 0;
-		}
-		else if (x < 0.3f && x > -0.3f)
-		{
-			vr.snap_armed = 1;
-		}
-	}
-	else if (x > 0.15f || x < -0.15f)
-	{
-		vr.heading = wrap_angle(vr.heading - x * vr.smooth_turn_speed * (float)seconds);
-	}
+	delta = sfvr_turn_update(&vr.turn_state, &vr.turn_config, vr.frame.thumb[2],
+		(float)(vr.frame.predicted_display_period * 1e-9));
+	if (delta != 0.0f)
+		vr.heading = wrap_angle(vr.heading - delta * 0.017453293f);
 }
 
 /* a unit quaternion whose -z is `forward` and whose +y is as near `up`
@@ -2115,21 +2122,18 @@ static void draw_fade(float amount)
 void vr_present(unsigned int source, unsigned int texture, int width, int height)
 {
 	struct halo_xr_layers layers;
-	double start = 0.0, copied = 0.0;
+	double start, copied, ended, game_ms, gpu_ms = -1.0;
 
 	if (!vr.active || !frame_begin())
 		return;
-	if (vr.timing)
+	start = now_ms();
+	game_ms = start - vr.frame_start;
+	/* vr.timing_gpu: wait here for the GPU, so the time it takes
+	shows apart from the game's */
+	if (vr.gpu_finish)
 	{
-		start = now_ms();
-		/* vr.timing_gpu: wait here for the GPU, so the time it takes
-		shows apart from the game's */
-		if (vr.gpu_finish)
-		{
-			glFinish();
-			vr.gpu_ms += now_ms() - start;
-		}
-		vr.frame_ms += start - vr.frame_start;
+		glFinish();
+		gpu_ms = now_ms() - start;
 		start = now_ms();
 	}
 	memset(&layers, 0, sizeof(layers));
@@ -2239,32 +2243,39 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		layers.flags |= HALO_XR_LAYER_FADE;
 		vr.fade -= (float)(vr.frame.predicted_display_period * 1e-9) / VR_FADE_SECONDS;
 	}
-	if (vr.timing)
-		copied = now_ms();
+	copied = now_ms();
 	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
 		platform_log("vr: aim at the dump: %s, %s%s, heading %.1f, head yaw %.1f, aim yaw %.1f",
 			vr.seated ? "seated" : "on foot", vr.hand_aiming ? "hand aims" : "head aims",
 			vr.two_handed ? " with both hands" : "",
 			vr.heading * 57.29578f, vr.head_yaw * 57.29578f, vr.aim_yaw * 57.29578f);
+	/* the frame's buzzes, as one a hand, at vr.haptics' strength */
+	sfvr_haptic_flush(&vr.haptic_queue, vr.haptics, play_haptic, NULL);
 	frame_end(&layers);
-	if (vr.timing)
+	ended = now_ms();
+	/* the [vr-perf] window: CPU stages apart from the waits (the game's own
+	work, the passes' draw calls, the copies into the images, ending the
+	frame), each eye's pass, the GPU's wait with vr.timing_gpu; a frame is
+	missed when the display time came more than a half period late */
 	{
-		double ended = now_ms();
+		float stage_ms[4], eye_ms[2];
+		float render = (float)(vr.pass_ms[0] + vr.pass_ms[1] + vr.pass_ms[2] + vr.pass_ms[3]);
+		long long period = vr.frame.predicted_display_period;
+		int missed = vr.last_display_time && period > 0 &&
+			vr.frame.predicted_display_time - vr.last_display_time > period + period / 2;
+		char line[200];
 
-		vr.copy_ms += copied - start;
-		vr.end_ms += ended - copied;
-		if (++vr.timed == 300)
-		{
-			double n = (double)vr.timed;
-
-			platform_log("[vr-frame] %s ms a frame: wait %.2f, game %.2f (left eye %.2f, right eye %.2f, HUD %.2f, "
-				"scope %.2f; GPU finish %.2f), copies %.2f, end %.2f",
-				vr.stereo ? "stereo" : "flat", vr.wait_ms / n, vr.frame_ms / n, vr.pass_ms[0] / n, vr.pass_ms[1] / n,
-				vr.pass_ms[2] / n, vr.pass_ms[3] / n, vr.gpu_ms / n, vr.copy_ms / n, vr.end_ms / n);
-			vr.timed = 0;
-			vr.wait_ms = vr.frame_ms = vr.gpu_ms = vr.copy_ms = vr.end_ms = 0.0;
-			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = vr.pass_ms[3] = 0.0;
-		}
+		vr.last_display_time = vr.frame.predicted_display_time;
+		stage_ms[0] = (float)game_ms > render ? (float)game_ms - render : 0.0f;
+		stage_ms[1] = render;
+		stage_ms[2] = (float)(copied - start);
+		stage_ms[3] = (float)(ended - copied);
+		eye_ms[0] = (float)vr.pass_ms[0];
+		eye_ms[1] = (float)vr.pass_ms[1];
+		sfvr_perf_add_frame(&vr.perf, ended * 0.001, missed, stage_ms, eye_ms, (float)gpu_ms);
+		if (sfvr_perf_poll(&vr.perf, ended * 0.001, line, sizeof(line)))
+			platform_log("%s", line);
+		vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = vr.pass_ms[3] = 0.0;
 	}
 	if (vr.stereo)
 		vr.stereo_frames++;

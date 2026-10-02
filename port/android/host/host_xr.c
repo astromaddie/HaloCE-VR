@@ -976,7 +976,8 @@ static void log_statistics(void)
 	seconds = (double)(now.tv_sec - xr.stats_start.tv_sec) + (now.tv_nsec - xr.stats_start.tv_nsec) * 1e-9;
 	if (seconds < 10.0)
 		return;
-	host_logf(HOST_LOG_INFO, "[vr-perf] %.1f frames/s (%lld rendered) over %.1f s, period %.3f ms, state %s",
+	/* (the [vr-perf] line is the game's, vr_present; this is the runtime's side of it) */
+	host_logf(HOST_LOG_INFO, "[openxr] %.1f frames/s (%lld rendered) over %.1f s, period %.3f ms, state %s",
 		xr.frames / seconds, xr.frames_rendered, seconds, xr.frame_state.predictedDisplayPeriod * 1e-6,
 		state_name(xr.state));
 	/* A rate above 72 that the game does not hold while worn (focused) is
