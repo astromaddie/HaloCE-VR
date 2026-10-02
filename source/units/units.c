@@ -691,6 +691,7 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "sound/game_sound.h"
 #include "vehicles.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -4739,6 +4740,10 @@ void unit_adjust_projectile_ray(
 		real_point3d camera_position;
 
 		unit_get_camera_position(unit_index, &camera_position);
+#ifdef HALO_VR
+		/* shots from the hand that aims (port/linux/game/vr_render.c) */
+		vr_render_hand_origin(unit_index, &camera_position);
+#endif
 		vector_from_points3d(&camera_position, origin, &relative);
 		projection =
 			((relative.i*direction->i + relative.k*direction->k) +

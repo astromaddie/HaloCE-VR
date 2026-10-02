@@ -79,6 +79,7 @@ symbols in this file:
 
 #include <math.h>
 #include <string.h>
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -951,6 +952,11 @@ static void crosshairs_draw(
 		stack_buffer,
 		0x62,
 		sizeof(stack_buffer));
+#ifdef HALO_VR
+	/* the hand that aims has a reticle in the world instead */
+	if (vr_render_hand_aiming())
+		return;
+#endif
 	if (TEST_FLAG(weapon_hud_globals->script_flags, _hud_crosshair_show_bit) &&
 		hud_index != NONE)
 	{

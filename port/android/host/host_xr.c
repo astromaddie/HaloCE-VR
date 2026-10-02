@@ -709,8 +709,11 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 		if (!create_swapchain(index, views[index].recommendedImageRectWidth, views[index].recommendedImageRectHeight))
 			return -1;
 	}
-	if (!create_swapchain(HALO_XR_SWAPCHAIN_QUAD, quad_width, quad_height))
+	if (!create_swapchain(HALO_XR_SWAPCHAIN_QUAD, quad_width, quad_height) ||
+		!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64))
+	{
 		return -1;
+	}
 	xr.actions_ready = create_actions();
 	if (!xr.actions_ready)
 		host_logf(HOST_LOG_WARN, "[openxr] controller actions unavailable");
@@ -922,7 +925,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	XrCompositionLayerProjectionView views[2];
 	XrCompositionLayerProjection projection = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *list[2];
+	XrCompositionLayerQuad reticle = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	const XrCompositionLayerBaseHeader *list[3];
 	XrFrameEndInfo end = { XR_TYPE_FRAME_END_INFO };
 	uint32_t count = 0;
 	int which;
@@ -949,6 +953,22 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		projection.viewCount = 2;
 		projection.views = views;
 		list[count++] = (const XrCompositionLayerBaseHeader *)&projection;
+	}
+	/* the reticle sits in the world, under the HUD */
+	if (layers && (layers->flags & HALO_XR_LAYER_RETICLE) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
+
+		reticle.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		reticle.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		reticle.subImage.swapchain = swapchain->handle;
+		reticle.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		reticle.subImage.imageRect.extent.height = (int32_t)swapchain->height;
+		reticle.size.width = layers->reticle_size[0];
+		reticle.size.height = layers->reticle_size[1];
+		reticle.space = xr.local;
+		local_pose(&layers->reticle_pose, &reticle.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&reticle;
 	}
 	if (layers && (layers->flags & HALO_XR_LAYER_QUAD) && xr.frame_state.shouldRender)
 	{

@@ -50,6 +50,14 @@ static struct
 	/* vr.snap_turn (radians, 0 for smooth), vr.smooth_turn_speed (radians a second) */
 	float snap_turn, smooth_turn_speed;
 	int snap_armed, recentre_held;
+	/* vr.aim = "hand": the right controller aims (else the head), and the
+	head's and the aim's yaw this frame, for the left stick */
+	int hand_aim, hand_aiming, hand_aiming_last_frame;
+	float head_yaw, aim_yaw;
+	/* the weapon's place relative to the right hand (vr.weapon_offset_*) */
+	float weapon_offset[3];
+	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
+	float reticle_distance;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw;
@@ -98,6 +106,10 @@ void vr_initialize(void)
 	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
 	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
 	vr.snap_armed = 1;
+	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
+	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
+	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
+	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
 	vr.force_render = config_boolean("vr.force_render");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.dump_frame = config_integer("vr.dump_frame");
@@ -141,6 +153,8 @@ int vr_screen_scale(float scale[2])
 	return 1;
 }
 
+static float wrap_angle(float angle);
+
 int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 {
 	if (!vr.active || !(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
@@ -158,6 +172,18 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 		{
 			*buttons &= ~(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB);
 		}
+	}
+	if (vr.hand_aiming_last_frame)
+	{
+		/* the game moves the player relative to the aim; the stick means
+		relative to the head: turn it by the head's yaw from the aim's
+		(x right, y forward; a turn to the left is positive) */
+		float angle = wrap_angle(vr.head_yaw - vr.aim_yaw);
+		float c = cosf(angle), s = sinf(angle);
+		float x = thumb[0], y = thumb[1];
+
+		thumb[0] = x * c - y * s;
+		thumb[1] = x * s + y * c;
 	}
 	return 1;
 }
@@ -217,7 +243,7 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	/* vr.dump_frame: the stereo frame's images, as they are shown */
-	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame && which < 3)
 		dump_image(which, index, names[which]);
 	host_xr_release(which);
 	return 1;
@@ -395,13 +421,27 @@ static void turn(void)
 	}
 }
 
-int vr_aim(float game_yaw, float out_forward[3])
+/* the right hand's aim in Halo's axes at heading 0; 0 untracked */
+static int hand_forward(float out[3])
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	float local[3];
+
+	if (!(vr.frame.hand_valid[1] & 2))
+		return 0;
+	rotate(vr.frame.aim[1].orientation, xr_forward, local);
+	to_halo(local, 1.0f, 0.0f, out);
+	return 1;
+}
+
+int vr_aim(float game_yaw, int seated, float out_forward[3])
 {
 	const unsigned int needed = HALO_XR_FRAME_SHOULD_RENDER | HALO_XR_FRAME_VIEWS_VALID;
 	unsigned int both = HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB;
-	float head[3], head_yaw, cosine, sine;
+	float head[3], aim[3], head_yaw, cosine, sine;
 
 	vr.aiming = 0;
+	vr.hand_aiming = 0;
 	if (!vr.active || !vr.stereo_enabled || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f))
@@ -423,7 +463,15 @@ int vr_aim(float game_yaw, float out_forward[3])
 		vr.recentre_held = 0;
 	}
 	head_forward(head);
-	head_yaw = atan2f(head[1], head[0]);
+	/* the hand aims on foot; in a seat (a vehicle, a turret) the head
+	steers as the game's camera would */
+	memcpy(aim, head, sizeof(aim));
+	if (vr.hand_aim && !seated && hand_forward(aim))
+		vr.hand_aiming = 1;
+	/* the heading is kept so that the aim comes out as the game had it */
+	head_yaw = atan2f(aim[1], aim[0]);
+	vr.head_yaw = atan2f(head[1], head[0]);
+	vr.aim_yaw = head_yaw;
 	if (vr.frame.flags & HALO_XR_FRAME_RECENTRED)
 		vr.heading_valid = 0;
 	/* the game turned the player itself: the heading follows */
@@ -437,24 +485,24 @@ int vr_aim(float game_yaw, float out_forward[3])
 	/* the game limits its pitch short of straight up or down (85.5
 	degrees): so does the aim, keeping its heading */
 	{
-		float horizontal = sqrtf(head[0] * head[0] + head[1] * head[1]);
+		float horizontal = sqrtf(aim[0] * aim[0] + aim[1] * aim[1]);
 		const float limit = 0.08f; /* cos(85.4 degrees) */
 
 		if (horizontal < limit)
 		{
-			float x = horizontal > 1e-6f ? head[0] / horizontal : 1.0f;
-			float y = horizontal > 1e-6f ? head[1] / horizontal : 0.0f;
+			float x = horizontal > 1e-6f ? aim[0] / horizontal : 1.0f;
+			float y = horizontal > 1e-6f ? aim[1] / horizontal : 0.0f;
 
-			head[0] = x * limit;
-			head[1] = y * limit;
-			head[2] = head[2] < 0.0f ? -sqrtf(1.0f - limit * limit) : sqrtf(1.0f - limit * limit);
+			aim[0] = x * limit;
+			aim[1] = y * limit;
+			aim[2] = aim[2] < 0.0f ? -sqrtf(1.0f - limit * limit) : sqrtf(1.0f - limit * limit);
 		}
 	}
 	cosine = cosf(vr.heading);
 	sine = sinf(vr.heading);
-	out_forward[0] = head[0] * cosine - head[1] * sine;
-	out_forward[1] = head[0] * sine + head[1] * cosine;
-	out_forward[2] = head[2];
+	out_forward[0] = aim[0] * cosine - aim[1] * sine;
+	out_forward[1] = aim[0] * sine + aim[1] * cosine;
+	out_forward[2] = aim[2];
 	vr.last_aim_yaw = atan2f(out_forward[1], out_forward[0]);
 	vr.aiming = 1;
 	return 1;
@@ -463,6 +511,116 @@ int vr_aim(float game_yaw, float out_forward[3])
 int vr_aiming(void)
 {
 	return vr.aiming || vr.aiming_last_frame;
+}
+
+int vr_hand_aiming(void)
+{
+	return vr.hand_aiming || vr.hand_aiming_last_frame;
+}
+
+/* the hand's grip or aim pose as a view from `position` (the game's
+camera, where the head is drawn): the head's offset limited as for the
+eyes, the hand's from the head kept whole up to an arm's length */
+static int hand_view(const struct halo_xr_pose *pose, const float extra[3], const float position[3],
+	float out_position[3], float out_forward[3], float out_up[3])
+{
+	float offset[3], arm[3], heading[3], length;
+	int axis;
+
+	if (!vr.heading_valid)
+		return 0;
+	for (axis = 0; axis < 3; axis++)
+		arm[axis] = pose->position[axis] - vr.frame.head.position[axis];
+	if (extra)
+	{
+		float turned[3];
+
+		rotate(pose->orientation, extra, turned);
+		for (axis = 0; axis < 3; axis++)
+			arm[axis] += turned[axis];
+	}
+	length = sqrtf(arm[0] * arm[0] + arm[1] * arm[1] + arm[2] * arm[2]);
+	if (length > 0.9f)
+	{
+		for (axis = 0; axis < 3; axis++)
+			arm[axis] *= 0.9f / length;
+	}
+	head_offset(offset);
+	for (axis = 0; axis < 3; axis++)
+		offset[axis] += arm[axis];
+	vr_heading_forward(heading);
+	view(offset, pose->orientation, position, heading, out_position, out_forward, out_up);
+	return 1;
+}
+
+int vr_hand_ray(const float position[3], float out_origin[3], float out_direction[3])
+{
+	float up[3];
+
+	if (!vr_hand_aiming() || !(vr.frame.hand_valid[1] & 2))
+		return 0;
+	return hand_view(&vr.frame.aim[1], NULL, position, out_origin, out_direction, up);
+}
+
+int vr_weapon_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3])
+{
+	struct halo_xr_pose pose;
+	float extra[3];
+
+	if (!vr_hand_aiming() || (vr.frame.hand_valid[1] & 3) != 3)
+		return 0;
+	/* the grip's place, turned as the aim is, moved to where the game's
+	camera would be for the weapon's model to sit in the hand
+	(OpenXR's x right, y up, z back) */
+	pose = vr.frame.aim[1];
+	memcpy(pose.position, vr.frame.grip[1].position, sizeof(pose.position));
+	extra[0] = -vr.weapon_offset[0];
+	extra[1] = -vr.weapon_offset[1];
+	extra[2] = -vr.weapon_offset[2];
+	return hand_view(&pose, extra, position, out_position, out_forward, out_up);
+}
+
+void vr_set_reticle(float distance_units)
+{
+	vr.reticle_distance = distance_units > 0.0f ? distance_units / vr.units_per_metre : 0.0f;
+}
+
+/* a dot with a dark rim, drawn each frame into the reticle's image */
+static void draw_reticle(void)
+{
+	static const struct { int size; float colour[4]; } rings[] =
+	{
+		{ 0, { 0.0f, 0.0f, 0.0f, 0.0f } },
+		{ 20, { 0.0f, 0.0f, 0.0f, 0.55f } },
+		{ 12, { 0.85f, 0.95f, 1.0f, 0.95f } },
+	};
+	int index = host_xr_acquire(HALO_XR_SWAPCHAIN_RETICLE);
+	int size = (int)vr.info.width[HALO_XR_SWAPCHAIN_RETICLE];
+	unsigned int ring;
+
+	if (index < 0)
+		return;
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+		vr.info.images[HALO_XR_SWAPCHAIN_RETICLE][index], 0);
+	glViewport(0, 0, size, size);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	for (ring = 0; ring < sizeof(rings) / sizeof(rings[0]); ring++)
+	{
+		int extent = rings[ring].size ? rings[ring].size : size;
+
+		if (rings[ring].size)
+		{
+			glEnable(GL_SCISSOR_TEST);
+			glScissor((size - extent) / 2, (size - extent) / 2, extent, extent);
+		}
+		glClearColor(rings[ring].colour[0], rings[ring].colour[1], rings[ring].colour[2], rings[ring].colour[3]);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
+	glDisable(GL_SCISSOR_TEST);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	host_xr_release(HALO_XR_SWAPCHAIN_RETICLE);
 }
 
 int vr_heading_forward(float out_forward[3])
@@ -568,6 +726,22 @@ void vr_present(unsigned int source, int width, int height)
 			layers.quad_size[0] = vr.hud_width;
 			layers.quad_size[1] = vr.hud_width * 0.75f;
 		}
+		if (vr.hand_aiming && vr.reticle_distance > 0.0f && (vr.frame.hand_valid[1] & 2))
+		{
+			static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+			float direction[3];
+			int axis;
+
+			/* along the hand's aim in the runtime's space, facing the head,
+			about a degree across wherever it lands */
+			draw_reticle();
+			rotate(vr.frame.aim[1].orientation, xr_forward, direction);
+			for (axis = 0; axis < 3; axis++)
+				layers.reticle_pose.position[axis] = vr.frame.aim[1].position[axis] + direction[axis] * vr.reticle_distance;
+			memcpy(layers.reticle_pose.orientation, vr.frame.head.orientation, sizeof(layers.reticle_pose.orientation));
+			layers.reticle_size[0] = layers.reticle_size[1] = 0.018f * vr.reticle_distance;
+			layers.flags |= HALO_XR_LAYER_RETICLE;
+		}
 	}
 	else if ((vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER) &&
 		copy_to_swapchain(HALO_XR_SWAPCHAIN_QUAD, source, width, height))
@@ -586,6 +760,9 @@ void vr_present(unsigned int source, int width, int height)
 	vr.eyes_resolved = 0;
 	vr.aiming_last_frame = vr.aiming;
 	vr.aiming = 0;
+	vr.hand_aiming_last_frame = vr.hand_aiming;
+	vr.hand_aiming = 0;
+	vr.reticle_distance = 0.0f;
 }
 
 void vr_probe(void)

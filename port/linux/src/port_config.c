@@ -268,6 +268,17 @@ static const struct config_setting config_settings[] =
 		"How far ahead of the eyes the HUD floats, in metres." },
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
+	{ "vr.aim", _config_string, "\"head\"", "HALO_VR_AIM", _environment_value, _platform_vr,
+		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
+		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"
+		"head aims either way." },
+	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
+		"With vr.aim \"hand\": how far right of the game's eye the weapon's model\n"
+		"holds its grip, in metres, so the grip sits in the hand." },
+	{ "vr.weapon_offset_up", _config_real, "-0.12", "HALO_VR_WEAPON_UP", _environment_value, _platform_vr,
+		"As vr.weapon_offset_right, above the eye (negative is below)." },
+	{ "vr.weapon_offset_back", _config_real, "-0.20", "HALO_VR_WEAPON_BACK", _environment_value, _platform_vr,
+		"As vr.weapon_offset_right, behind the eye (negative is ahead)." },
 	{ "vr.snap_turn", _config_real, "30.0", "HALO_VR_SNAP_TURN", _environment_value, _platform_vr,
 		"Degrees the right stick turns you at a flick; 0 turns smoothly instead." },
 	{ "vr.smooth_turn_speed", _config_real, "120.0", "HALO_VR_SMOOTH_TURN_SPEED", _environment_value, _platform_vr,

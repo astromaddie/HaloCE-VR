@@ -63,11 +63,28 @@ the head. */
 a game whose facing has the yaw given; 0 when the head does not aim (no
 stereo this frame). The heading takes up the game's yaw when the game
 turned the player itself (a script, a respawn, another pad's stick). */
-int vr_aim(float game_yaw, float out_forward[3]);
+int vr_aim(float game_yaw, int seated, float out_forward[3]);
 /* 1 while the head aims: magnetism and the right stick leave the view alone */
 int vr_aiming(void);
 /* the heading the eyes are turned by (Halo's x, y) */
 int vr_heading_forward(float out_forward[3]);
+
+/* ---------- aiming with the hand (vr.aim = "hand")
+
+On foot the right controller aims: vr_aim gives its direction (seated,
+the head still aims), the left stick moves relative to the head, and the
+first-person weapon is posed in the hand. */
+
+/* 1 while the hand aims */
+int vr_hand_aiming(void);
+/* the hand's aiming ray from where the game's camera is (`position`): its
+origin in the world and direction; 0 unless the hand aims */
+int vr_hand_ray(const float position[3], float out_origin[3], float out_direction[3]);
+/* the camera the first-person weapon's model is posed from, for it to sit
+in the right hand; 0 unless the hand aims */
+int vr_weapon_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3]);
+/* how far along the hand's ray the reticle shows this frame, in world units */
+void vr_set_reticle(float distance_units);
 
 #else
 
@@ -79,6 +96,7 @@ int vr_heading_forward(float out_forward[3]);
 #define vr_controller(buttons, trigger, thumb) 0
 #define vr_stereo_begin() 0
 #define vr_aiming() 0
+#define vr_hand_aiming() 0
 
 #endif
 

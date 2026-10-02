@@ -52,6 +52,12 @@ void vr_render_weapon_camera(struct render_camera *camera);
 void vr_player_control_facing(short local_player_index);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
+/* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */
+int vr_render_hand_aiming(void);
+/* unit_adjust_projectile_ray: where the local player's shots start when
+the hand aims in a local game (the hand, unless a wall is in between);
+0 to leave the game's camera */
+int vr_render_hand_origin(long unit_index, union real_point3d *origin);
 /* clears the target being drawn to transparent black (the HUD pass) */
 void halo_vr_clear_transparent(void);
 /* copies the back buffer into an eye's image (port/linux/src/d3d8_gl.c) */
