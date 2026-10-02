@@ -801,7 +801,8 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	}
 	if (!create_swapchain(HALO_XR_SWAPCHAIN_QUAD, quad_width, quad_height) ||
 		!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64) ||
-		!create_swapchain(HALO_XR_SWAPCHAIN_FADE, 16, 16))
+		!create_swapchain(HALO_XR_SWAPCHAIN_FADE, 16, 16) ||
+		!create_swapchain(HALO_XR_SWAPCHAIN_SCOPE, 768, 768))
 	{
 		return -1;
 	}
@@ -1042,7 +1043,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	XrCompositionLayerQuad reticle = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad screen[2] = { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
 	XrCompositionLayerQuad fade = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *list[6];
+	XrCompositionLayerQuad scope = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	const XrCompositionLayerBaseHeader *list[7];
 	XrFrameEndInfo end = { XR_TYPE_FRAME_END_INFO };
 	uint32_t count = 0;
 	int which;
@@ -1130,6 +1132,22 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 			local_pose(&layers->quad_pose, &quad.pose);
 		}
 		list[count++] = (const XrCompositionLayerBaseHeader *)&quad;
+	}
+	/* a weapon's scope, held in the hand: nearer than the HUD */
+	if (layers && (layers->flags & HALO_XR_LAYER_SCOPE) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_SCOPE];
+
+		scope.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		scope.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		scope.subImage.swapchain = swapchain->handle;
+		scope.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		scope.subImage.imageRect.extent.height = (int32_t)swapchain->height;
+		scope.size.width = layers->scope_size[0];
+		scope.size.height = layers->scope_size[1];
+		scope.space = xr.local;
+		local_pose(&layers->scope_pose, &scope.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&scope;
 	}
 	/* a fade to black over everything: a quad just ahead of the eyes,
 	wider than they see */

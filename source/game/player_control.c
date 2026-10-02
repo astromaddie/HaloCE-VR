@@ -637,6 +637,8 @@ static void handle_one_player_input(
 			SET_FLAG(input.unit_control_flags, _unit_control_crouch_modifier_bit, TRUE);
 		if (actions & VR_RENDER_ACTION_SWITCH_WEAPON)
 			SET_FLAG(input.player_control_flags, _player_control_rotate_weapons_bit, TRUE);
+		if (actions & VR_RENDER_ACTION_ZOOM)
+			SET_FLAG(input.player_control_flags, _player_control_input_zoom_bit, TRUE);
 	}
 #endif
 	if (local_player_get_player_index(local_player_index) != NONE)

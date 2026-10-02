@@ -7,7 +7,9 @@ port/linux/game/vr_render.c, over port/linux/src/vr_frame.c).
 A stereo frame renders the one player window three times in render_frame's
 window loop: the left and right eyes (each resolved into its swapchain
 image as it finishes), then the HUD alone on a transparent ground, which
-the headset shows on a layer ahead of the head. The game advances its
+the headset shows on a layer ahead of the head. While a hand-aimed weapon
+is zoomed, a fourth pass between the eyes and the HUD renders the scope's
+view along the gun, which the headset shows on a layer held at the gun. The game advances its
 per-frame state once: systems that move on as they draw do so for the left
 eye only.
 */
@@ -31,6 +33,9 @@ enum
 	window's letterbox, then resolved) */
 	_vr_render_pass_cinema_left_eye,
 	_vr_render_pass_cinema_right_eye,
+	/* the zoomed view along a hand-aimed gun, for its scope (resolved as it
+	finishes, before the HUD pass clears the target) */
+	_vr_render_pass_scope,
 };
 
 /* which pass the window being rendered is */
@@ -38,14 +43,20 @@ extern int vr_render_pass;
 
 #define VR_RENDER_EYE() (vr_render_pass == _vr_render_pass_left_eye || vr_render_pass == _vr_render_pass_right_eye)
 #define VR_RENDER_HUD() (vr_render_pass == _vr_render_pass_hud)
+#define VR_RENDER_SCOPE() (vr_render_pass == _vr_render_pass_scope)
+/* a view of the world for the headset alone: no HUD drawn over it, and no
+fog screen (which assumes the game's own camera and frustum) */
+#define VR_RENDER_VIEW() (VR_RENDER_EYE() || VR_RENDER_SCOPE())
 /* the passes after the first, which must not advance per-frame state */
 #define VR_RENDER_REPEAT() (vr_render_pass == _vr_render_pass_right_eye || \
-	vr_render_pass == _vr_render_pass_hud || vr_render_pass == _vr_render_pass_cinema_right_eye)
+	vr_render_pass == _vr_render_pass_hud || vr_render_pass == _vr_render_pass_cinema_right_eye || \
+	vr_render_pass == _vr_render_pass_scope)
 
 /* main_game_render: makes a single player window (followed by the console
-window) into the eyes, the HUD and the console window when this frame is
-drawn in stereo, or a cutscene's into each eye's view and console window;
-returns the window count to render */
+window) into the eyes, the scope (while zoomed), the HUD and the console
+window when this frame is drawn in stereo, or a cutscene's into each eye's
+view and console window; returns the window count to render (at most
+MAXIMUM_WINDOWS + 1) */
 short vr_render_windows(struct render_window *windows, short window_count);
 /* render_frame, around each window */
 void vr_render_window_begin(short window_index);
@@ -76,11 +87,16 @@ local player this frame (VR_RENDER_ACTION_*; vr.h's VR_ACTION_*) */
 #define VR_RENDER_ACTION_FLASHLIGHT 0x2u
 #define VR_RENDER_ACTION_CROUCH 0x4u
 #define VR_RENDER_ACTION_SWITCH_WEAPON 0x8u
+#define VR_RENDER_ACTION_ZOOM 0x10u        /* (vr.diag_zoom_seconds) */
 unsigned long vr_render_actions(short local_player_index);
 /* the first-person weapon is drawn mirrored (held in the left hand):
 first_person_weapons.c brackets its drawing with halo_vr_mirror_winding */
 int vr_render_first_person_mirrored(void);
 void halo_vr_mirror_winding(int mirrored);
+/* 1 in a stereo frame, whose eyes see the world unmagnified (a zoom shows
+in the scope, or not at all): the first-person weapon stays in view while
+zoomed, and the HUD draws no zoom mask */
+int vr_render_unzoomed_view(void);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
 /* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */
@@ -93,11 +109,17 @@ int vr_render_hand_origin(long unit_index, union real_point3d *origin);
 void halo_vr_clear_transparent(void);
 /* copies the back buffer into an eye's image (port/linux/src/d3d8_gl.c) */
 void halo_vr_resolve_eye(int eye);
+/* copies the scope's view from the back buffer, the part of the 640x480
+screen given, into the scope's image through its sight (vr.h's VR_SCOPE_*;
+port/linux/src/d3d8_gl.c) */
+void halo_vr_resolve_scope(short x0, short y0, short x1, short y1, int shape);
 
 #else
 
 #define VR_RENDER_EYE() 0
 #define VR_RENDER_HUD() 0
+#define VR_RENDER_SCOPE() 0
+#define VR_RENDER_VIEW() 0
 #define VR_RENDER_REPEAT() 0
 
 #endif

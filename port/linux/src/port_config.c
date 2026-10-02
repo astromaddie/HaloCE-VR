@@ -335,6 +335,11 @@ static const struct config_setting config_settings[] =
 		"The strength of the controllers' buzz (shots, gestures), 0 to 1; 0 none." },
 	{ "vr.holsters", _config_boolean, "true", "HALO_VR_HOLSTERS", _environment_value, _platform_vr,
 		"The weapon hand's grip at either shoulder switches weapons." },
+	{ "vr.scope", _config_boolean, "true", "HALO_VR_SCOPE", _environment_value, _platform_vr,
+		"With vr.aim \"hand\": a zoomed weapon shows its zoom in a scope held at\n"
+		"the gun (an extra view rendered while zoomed); your eyes stay unzoomed." },
+	{ "vr.scope_size", _config_real, "0.06", "HALO_VR_SCOPE_SIZE", _environment_value, _platform_vr,
+		"How wide the scope is, in metres." },
 	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": how far right of the game's eye the weapon's model\n"
 		"holds its grip, in metres, so the grip sits in the hand." },
@@ -361,6 +366,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_drive_seconds", _config_real, "0.0", "HALO_VR_DIAG_DRIVE_SECONDS", _environment_value, _platform_vr,
 		"This many seconds into play, seat the player as the nearest vehicle's\n"
 		"driver: for testing; 0 never." },
+	{ "vr.diag_zoom_seconds", _config_real, "0.0", "HALO_VR_DIAG_ZOOM_SECONDS", _environment_value, _platform_vr,
+		"This many seconds into play, zoom in (switching first to a weapon that\n"
+		"zooms): for testing the scope; 0 never." },
 	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
 		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
 		"and vr-hud.bmp in the data folder; 0 none." },

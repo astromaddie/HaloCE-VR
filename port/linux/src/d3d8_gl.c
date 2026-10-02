@@ -3883,6 +3883,27 @@ void halo_vr_resolve_eye(int eye)
 	xgpu_gl_state_invalidate();
 }
 
+void halo_vr_resolve_scope(short x0, short y0, short x1, short y1, int shape)
+{
+	struct render_target_entry *back_buffer;
+	const float *scale;
+	GLint left, top, size;
+
+	if (!device.gl_ready)
+		return;
+	back_buffer = render_target_get(&device.back_buffer);
+	scale = back_buffer->target.scale;
+	/* the pixels its viewport covered (apply_raster_state), as a square */
+	left = (GLint)floorf(x0 * scale[0] + 0.5f);
+	top = (GLint)floorf(y0 * scale[1] + 0.5f);
+	size = (GLint)floorf(x1 * scale[0] + 0.5f) - left;
+	if ((GLint)floorf(y1 * scale[1] + 0.5f) - top < size)
+		size = (GLint)floorf(y1 * scale[1] + 0.5f) - top;
+	vr_resolve_scope(back_buffer->target.texture, (int)back_buffer->target.gl_width,
+		(int)back_buffer->target.gl_height, left, top, size, shape);
+	xgpu_gl_state_invalidate();
+}
+
 void halo_vr_clear_transparent(void)
 {
 	D3DDevice_Clear(0, NULL, D3DCLEAR_TARGET, 0x00000000, 1.0f, 0);

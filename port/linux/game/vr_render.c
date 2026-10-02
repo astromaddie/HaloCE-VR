@@ -23,6 +23,7 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "tag_files/tag_groups.h"
 #include "tag_files/tag_files.h"
 #include "items/weapons.h"
+#include "items/weapon_definitions.h"
 
 #include "halo_vr.h"
 #include "../src/vr.h"
@@ -44,6 +45,11 @@ static struct
 	/* a cutscene eye's frustum turned in, in the bounds' units */
 	real cinema_shift[2];
 	real_rectangle2d eye_bounds[2];
+	/* the scope's pass this frame: its sight (VR_SCOPE_*, 0 none), field and
+	viewport */
+	int scope_shape;
+	real_rectangle2d scope_bounds;
+	rectangle2d scope_viewport;
 	/* the game's camera this frame, the head posed from it */
 	struct render_camera head_camera;
 	real_point3d game_camera_position;
@@ -299,6 +305,88 @@ static short cinema_windows(
 	return 4;
 }
 
+/* the sight of the weapon the local player holds (vr.h's VR_SCOPE_*), by
+its tag's name */
+static int scope_shape(
+	short local_player_index)
+{
+	long player_index = local_player_get_player_index(local_player_index);
+	long unit_index = player_index != NONE ? player_get(player_index)->unit_index : NONE;
+	long weapon_index;
+	char const *name;
+
+	if (unit_index == NONE)
+		return 0;
+	weapon_index = unit_inventory_get_weapon(unit_index, unit_get(unit_index)->unit.current_weapon_index);
+	if (weapon_index == NONE)
+		return 0;
+	name = tag_get_name(weapon_get(weapon_index)->definition_index);
+	return name && strstr(name, "sniper") ? VR_SCOPE_SNIPER :
+		name && strstr(name, "rocket") ? VR_SCOPE_ROCKET : VR_SCOPE_ROUND;
+}
+
+/* the scope's window, while the hand aims a zoomed weapon: the player's
+window seen along the gun at the game's zoomed field, in a square of the
+target as large as the scope's image. Its sight shows the middle of that
+field (the PC mod HaloCEVR's: a disc half the screen's height, or the sniper
+rifle's wide rectangle), so the frustum is cut to it. FALSE for none. */
+static boolean scope_window(
+	struct render_window *window,
+	struct render_window const *player)
+{
+	struct render_camera *camera = &window->rasterizer_camera;
+	real_point3d position;
+	real_vector3d forward, up, vector;
+	struct collision_result collision;
+	float scale[2];
+	real tangent, half, aspect;
+	int pixels, shape;
+	short width, height;
+
+	if (player_control_get_zoom_level(player->local_player_index) == NONE ||
+		!(shape = scope_shape(player->local_player_index)) ||
+		!vr_screen_scale(scale) || scale[0] <= 0.0f || scale[1] <= 0.0f ||
+		!vr_scope_view(vr_render.game_camera_position.n, position.n, forward.n, up.n, &pixels))
+	{
+		return FALSE;
+	}
+	width = (short)MIN(640.0f, (real)pixels / scale[0] + 0.5f);
+	height = (short)MIN(480.0f, (real)pixels / scale[1] + 0.5f);
+	if (width < 16 || height < 16)
+		return FALSE;
+	/* out of walls, as the hand's shots are */
+	vector_from_points3d(&vr_render.game_camera_position, &position, &vector);
+	if (collision_test_vector(FLAG(_collision_test_structure_bit), &vr_render.game_camera_position, &vector,
+		NONE, &collision))
+	{
+		position.x = vr_render.game_camera_position.x + vector.i * collision.t * 0.9f;
+		position.y = vr_render.game_camera_position.y + vector.j * collision.t * 0.9f;
+		position.z = vr_render.game_camera_position.z + vector.k * collision.t * 0.9f;
+	}
+	*window = *player;
+	tangent = (real)tan(player->render_camera.vertical_field_of_view * 0.5f);
+	half = tangent * (shape == VR_SCOPE_SNIPER ? 0.4033f : 0.5f);
+	camera->position = position;
+	camera->forward = forward;
+	camera->up = up;
+	camera->viewport_bounds.x0 = camera->viewport_bounds.y0 = 0;
+	camera->viewport_bounds.x1 = width;
+	camera->viewport_bounds.y1 = height;
+	camera->window_bounds = camera->viewport_bounds;
+	/* the bounds are tangents of a 90-degree field; x spans them times the
+	viewport's aspect (render_camera_build_frustum) */
+	camera->vertical_field_of_view = _pi * 0.5f;
+	aspect = (real)width / (real)height;
+	vr_render.scope_bounds.x0 = -half / aspect;
+	vr_render.scope_bounds.x1 = half / aspect;
+	vr_render.scope_bounds.y0 = -half;
+	vr_render.scope_bounds.y1 = half;
+	vr_render.scope_viewport = camera->viewport_bounds;
+	vr_render.scope_shape = shape;
+	window->render_camera = *camera;
+	return TRUE;
+}
+
 short vr_render_windows(
 	struct render_window *windows,
 	short window_count)
@@ -308,6 +396,7 @@ short vr_render_windows(
 
 	vr_render.stereo = FALSE;
 	vr_render.cinema = FALSE;
+	vr_render.scope_shape = 0;
 	for (eye = 0; eye < 5; eye++)
 	{
 		vr_render.pass_of_window[eye] = _vr_render_pass_none;
@@ -387,6 +476,16 @@ short vr_render_windows(
 	vr_render.pass_of_window[2] = _vr_render_pass_hud;
 	vr_render.eye_of_window[0] = 0;
 	vr_render.eye_of_window[1] = 1;
+	/* zoomed: the scope's view before the HUD (window 2, within
+	MAXIMUM_WINDOWS for the rasterizer's per-window state) */
+	if (scope_window(&windows[2], &player))
+	{
+		windows[3] = player;
+		windows[4] = console;
+		vr_render.pass_of_window[2] = _vr_render_pass_scope;
+		vr_render.pass_of_window[3] = _vr_render_pass_hud;
+		return 5;
+	}
 	return 4;
 }
 
@@ -407,6 +506,11 @@ void vr_render_window_end(
 	{
 		halo_vr_resolve_eye(vr_render.eye_of_window[window_index]);
 	}
+	if (VR_RENDER_SCOPE())
+	{
+		halo_vr_resolve_scope(vr_render.scope_viewport.x0, vr_render.scope_viewport.y0,
+			vr_render.scope_viewport.x1, vr_render.scope_viewport.y1, vr_render.scope_shape);
+	}
 	vr_render_pass = _vr_render_pass_none;
 }
 
@@ -417,6 +521,10 @@ void vr_render_frustum_bounds(
 	{
 		*bounds = vr_render.eye_bounds[vr_render_pass];
 	}
+	else if (VR_RENDER_SCOPE())
+	{
+		*bounds = vr_render.scope_bounds;
+	}
 	else if (vr_render_pass == _vr_render_pass_cinema_left_eye || vr_render_pass == _vr_render_pass_cinema_right_eye)
 	{
 		real shift = vr_render.cinema_shift[vr_render_pass == _vr_render_pass_cinema_right_eye];
@@ -424,6 +532,12 @@ void vr_render_frustum_bounds(
 		bounds->x0 += shift;
 		bounds->x1 += shift;
 	}
+}
+
+int vr_render_unzoomed_view(
+	void)
+{
+	return vr_render.stereo;
 }
 
 void vr_render_weapon_camera(
@@ -576,12 +690,51 @@ void vr_render_weapon_fired(
 		vr_haptic(1 - hand, amplitude * 0.6f, seconds);
 }
 
+/* vr.diag_zoom_seconds: this long into play the local player zooms in,
+switching first to a weapon that zooms (for checking the scope
+unattended) */
+static unsigned long vr_diag_zoom(
+	short local_player_index)
+{
+	static real seconds = -1.0f;
+	static long next_tick = NONE;
+	static int switches = 0;
+	long player_index = local_player_get_player_index(local_player_index);
+	long unit_index = player_index != NONE ? player_get(player_index)->unit_index : NONE;
+	long weapon_index;
+
+	if (seconds < 0.0f)
+		seconds = (real)config_real("vr.diag_zoom_seconds");
+	if (seconds <= 0.0f || unit_index == NONE || cinematic_in_progress())
+		return 0;
+	if (next_tick == NONE)
+		next_tick = game_time_get() + (long)(seconds * TICKS_PER_SECOND);
+	if (game_time_get() < next_tick)
+		return 0;
+	weapon_index = unit_inventory_get_weapon(unit_index, unit_get(unit_index)->unit.current_weapon_index);
+	if (weapon_index != NONE && weapon_definition_get(weapon_get(weapon_index)->definition_index)->weapon.zoom_level_count > 0)
+	{
+		seconds = 0.0f;
+		platform_log("vr: diag zoom: zooming %s", tag_get_name(weapon_get(weapon_index)->definition_index));
+		return VR_RENDER_ACTION_ZOOM;
+	}
+	if (++switches > 3)
+	{
+		seconds = 0.0f;
+		platform_log("vr: diag zoom: no weapon that zooms");
+		return 0;
+	}
+	/* a weapon switch takes its animation's time */
+	next_tick = game_time_get() + 2 * TICKS_PER_SECOND;
+	return VR_RENDER_ACTION_SWITCH_WEAPON;
+}
+
 unsigned long vr_render_actions(
 	short local_player_index)
 {
 	if (local_player_index != local_player_get_next(NONE) || !vr_active())
 		return 0;
-	return vr_take_actions();
+	return vr_take_actions() | vr_diag_zoom(local_player_index);
 }
 
 int vr_render_first_person_mirrored(

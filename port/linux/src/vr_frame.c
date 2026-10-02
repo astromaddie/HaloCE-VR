@@ -100,6 +100,10 @@ static struct
 	unsigned int actions;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
 	float reticle_distance;
+	/* the scope (vr.scope, vr.scope_size): its image this frame, and its
+	sight's shape (VR_SCOPE_*) */
+	int scope_enabled, scope_resolved, scope_shape;
+	float scope_size;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw, diag_hand_yaw;
@@ -108,7 +112,7 @@ static struct
 	long stereo_frames, cinema_frames;
 	/* timing (vr.timing): milliseconds summed over `timed` frames */
 	int timing, gpu_finish;
-	double frame_start, pass_start, wait_ms, frame_ms, pass_ms[3], gpu_ms, copy_ms, end_ms;
+	double frame_start, pass_start, wait_ms, frame_ms, pass_ms[4], gpu_ms, copy_ms, end_ms;
 	long timed;
 } vr;
 
@@ -188,6 +192,8 @@ void vr_initialize(void)
 	vr.crouch_height = (float)config_real("vr.crouch_height");
 	vr.holsters = config_boolean("vr.holsters");
 	vr.haptics = (float)config_real("vr.haptics");
+	vr.scope_enabled = config_boolean("vr.scope");
+	vr.scope_size = (float)config_real("vr.scope_size");
 	vr.zoom_level = -1;
 	vr.flashlight_armed = 1;
 	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
@@ -629,7 +635,10 @@ void vr_pass_mark(int pass, int end)
 {
 	double now;
 
-	if (!vr.timing || pass < 0 || pass > 2)
+	/* the scope's pass (5) is timed in the fourth slot */
+	if (pass == 5)
+		pass = 3;
+	if (!vr.timing || pass < 0 || pass > 3)
 		return;
 	now = now_ms();
 	if (end)
@@ -1357,7 +1366,7 @@ static const char hud_fragment_source[] =
 	"	colour = vec4(rgb, max(rgb.r, max(rgb.g, rgb.b)));\n"
 	"}\n";
 
-static GLuint hud_program, hud_vertex_array;
+static GLuint hud_program, scope_program, hud_vertex_array;
 
 static GLuint compile_shader(GLenum type, const char *source)
 {
@@ -1377,26 +1386,33 @@ static GLuint compile_shader(GLenum type, const char *source)
 	return shader;
 }
 
+/* a program drawing a whole target from the corners hud_vertex_source
+makes */
+static GLuint link_program(const char *fragment_source, const char *name)
+{
+	GLuint program = glCreateProgram();
+	GLint ok = 0;
+
+	glAttachShader(program, compile_shader(GL_VERTEX_SHADER, hud_vertex_source));
+	glAttachShader(program, compile_shader(GL_FRAGMENT_SHADER, fragment_source));
+	glLinkProgram(program);
+	glGetProgramiv(program, GL_LINK_STATUS, &ok);
+	if (!ok)
+	{
+		char log[512];
+
+		glGetProgramInfoLog(program, sizeof(log), NULL, log);
+		platform_log("vr: %s program: %s", name, log);
+	}
+	if (!hud_vertex_array)
+		glGenVertexArrays(1, &hud_vertex_array);
+	return program;
+}
+
 static int hud_program_ready(void)
 {
 	if (!hud_program)
-	{
-		GLint ok = 0;
-
-		hud_program = glCreateProgram();
-		glAttachShader(hud_program, compile_shader(GL_VERTEX_SHADER, hud_vertex_source));
-		glAttachShader(hud_program, compile_shader(GL_FRAGMENT_SHADER, hud_fragment_source));
-		glLinkProgram(hud_program);
-		glGetProgramiv(hud_program, GL_LINK_STATUS, &ok);
-		if (!ok)
-		{
-			char log[512];
-
-			glGetProgramInfoLog(hud_program, sizeof(log), NULL, log);
-			platform_log("vr: HUD program: %s", log);
-		}
-		glGenVertexArrays(1, &hud_vertex_array);
-	}
+		hud_program = link_program(hud_fragment_source, "HUD");
 	return hud_program != 0;
 }
 
@@ -1437,6 +1453,142 @@ static int copy_hud(GLuint texture)
 		dump_image(which, index, "vr-hud.bmp");
 	host_xr_release(which);
 	return 1;
+}
+
+/* ---------- the scope */
+
+/* The scope's view, a square of the back buffer, through its sight: a
+disc (or the sniper rifle's wide rounded rectangle) darkening toward its
+rim, a thin cross with a dot at its centre, transparent outside it
+(premultiplied). `coordinate` runs from the top left of the square. */
+static const char scope_fragment_source[] =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"uniform sampler2D view;\n"
+	"uniform vec4 rect;\n"
+	"uniform int shape;\n"
+	"in vec2 coordinate;\n"
+	"out vec4 colour;\n"
+	"void main()\n"
+	"{\n"
+	"	vec2 p = vec2(coordinate.x * 2.0 - 1.0, 1.0 - coordinate.y * 2.0);\n"
+	"	float edge;\n"
+	"	if (shape == 2)\n"
+	"	{\n"
+	"		vec2 q = abs(p) - vec2(1.0, 0.626) + 0.08;\n"
+	"		edge = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.08;\n"
+	"	}\n"
+	"	else\n"
+	"		edge = length(p) - 1.0;\n"
+	"	float soft = max(fwidth(edge), 0.004);\n"
+	"	float inside = 1.0 - smoothstep(-soft, soft, edge);\n"
+	"	vec3 rgb = texture(view, rect.xy + coordinate * rect.zw).rgb;\n"
+	"	rgb *= mix(1.0, 0.45, smoothstep(-0.2, 0.0, edge));\n"
+	"	vec2 a = abs(p);\n"
+	"	float line = 0.012;\n"
+	"	float mark = (a.x < line && a.y > 0.1 && a.y < 0.45) || (a.y < line && a.x > 0.1 && a.x < 0.45) ||\n"
+	"		length(p) < 0.025 ? 1.0 : 0.0;\n"
+	"	rgb = mix(rgb, vec3(0.85, 0.95, 1.0), mark * 0.85);\n"
+	"	colour = vec4(rgb * inside, inside);\n"
+	"}\n";
+
+int vr_scope_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3],
+	int *out_pixels)
+{
+	int pixels = (int)vr.info.width[HALO_XR_SWAPCHAIN_SCOPE];
+
+	if (!vr.scope_enabled || !vr.stereo || !vr_hand_aiming() || !(vr.frame.hand_valid[vr.weapon_hand] & 2))
+		return 0;
+	/* the gun's aim, rolled with it: the image keeps the world's way up on
+	the layer, which rolls with the gun too */
+	if (!hand_view(&vr.aim_pose, NULL, position, out_position, out_forward, out_up))
+		return 0;
+	*out_pixels = pixels < vr.eye_size ? pixels : vr.eye_size;
+	return 1;
+}
+
+static int scope_program_ready(void)
+{
+	if (!scope_program)
+		scope_program = link_program(scope_fragment_source, "scope");
+	return scope_program != 0;
+}
+
+void vr_resolve_scope(unsigned int texture, int width, int height, int x, int y, int size, int shape)
+{
+	unsigned int which = HALO_XR_SWAPCHAIN_SCOPE;
+	int index;
+
+	if (!vr.stereo || size <= 0 || width <= 0 || height <= 0 || !scope_program_ready() ||
+		(index = host_xr_acquire(which)) < 0)
+	{
+		return;
+	}
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+		vr.info.images[which][index], 0);
+	glViewport(0, 0, (GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_STENCIL_TEST);
+	glDisable(GL_CULL_FACE);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	if (vr.srgb_write_control)
+		glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+	glUseProgram(scope_program);
+	glUniform1i(glGetUniformLocation(scope_program, "view"), 0);
+	{
+		float rect[4] = { (float)x / (float)width, (float)y / (float)height,
+			(float)size / (float)width, (float)size / (float)height };
+
+		glUniform4fv(glGetUniformLocation(scope_program, "rect"), 1, rect);
+	}
+	glUniform1i(glGetUniformLocation(scope_program, "shape"), shape == VR_SCOPE_SNIPER ? 2 : 1);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glBindSampler(0, 0);
+	glBindVertexArray(hud_vertex_array);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+	glUseProgram(0);
+	if (vr.srgb_write_control)
+		glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	if (dumping())
+		dump_image(which, index, "vr-scope.bmp");
+	host_xr_release(which);
+	vr.scope_resolved = 1;
+	vr.scope_shape = shape;
+}
+
+/* the scope's layer, held at the gun: its place by the sight's shape
+(the PC mod HaloCEVR's offsets: forward, left and up, metres, from the
+aim), facing back along it, vr.scope_size across */
+static void place_scope(struct halo_xr_layers *layers)
+{
+	static const float offsets[][3] =
+	{
+		{ -0.10f, 0.00f, 0.15f },  /* VR_SCOPE_ROUND */
+		{ -0.15f, 0.00f, 0.15f },  /* VR_SCOPE_SNIPER */
+		{ 0.10f, 0.20f, 0.10f },   /* VR_SCOPE_ROCKET */
+	};
+	const float *offset = offsets[vr.scope_shape >= VR_SCOPE_ROUND && vr.scope_shape <= VR_SCOPE_ROCKET ?
+		vr.scope_shape - VR_SCOPE_ROUND : 0];
+	/* OpenXR's x right, y up, z back; in the left hand, left is the other way */
+	float local[3], turned[3];
+	int axis;
+
+	local[0] = vr.weapon_hand ? -offset[1] : offset[1];
+	local[1] = offset[2];
+	local[2] = -offset[0];
+	rotate(vr.aim_pose.orientation, local, turned);
+	for (axis = 0; axis < 3; axis++)
+		layers->scope_pose.position[axis] = vr.aim_pose.position[axis] + turned[axis];
+	memcpy(layers->scope_pose.orientation, vr.aim_pose.orientation, sizeof(layers->scope_pose.orientation));
+	layers->scope_size[0] = layers->scope_size[1] = vr.scope_size;
+	layers->flags |= HALO_XR_LAYER_SCOPE;
 }
 
 enum
@@ -1574,6 +1726,8 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			if (vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
 				platform_log("vr: reticle %.2f m along the hand's aim", vr.reticle_distance);
 		}
+		if (vr.scope_resolved && (vr.frame.hand_valid[vr.weapon_hand] & 2) && vr.scope_size > 0.0f)
+			place_scope(&layers);
 	}
 	else if ((vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER) &&
 		copy_to_swapchain(HALO_XR_SWAPCHAIN_QUAD, source, width, height))
@@ -1608,13 +1762,13 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		{
 			double n = (double)vr.timed;
 
-			platform_log("[vr-frame] %s ms a frame: wait %.2f, game %.2f (left eye %.2f, right eye %.2f, HUD %.2f; "
-				"GPU finish %.2f), copies %.2f, end %.2f",
+			platform_log("[vr-frame] %s ms a frame: wait %.2f, game %.2f (left eye %.2f, right eye %.2f, HUD %.2f, "
+				"scope %.2f; GPU finish %.2f), copies %.2f, end %.2f",
 				vr.stereo ? "stereo" : "flat", vr.wait_ms / n, vr.frame_ms / n, vr.pass_ms[0] / n, vr.pass_ms[1] / n,
-				vr.pass_ms[2] / n, vr.gpu_ms / n, vr.copy_ms / n, vr.end_ms / n);
+				vr.pass_ms[2] / n, vr.pass_ms[3] / n, vr.gpu_ms / n, vr.copy_ms / n, vr.end_ms / n);
 			vr.timed = 0;
 			vr.wait_ms = vr.frame_ms = vr.gpu_ms = vr.copy_ms = vr.end_ms = 0.0;
-			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = 0.0;
+			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = vr.pass_ms[3] = 0.0;
 		}
 	}
 	if (vr.stereo)
@@ -1624,6 +1778,7 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	vr.stereo = 0;
 	vr.cinema = 0;
 	vr.eyes_resolved = 0;
+	vr.scope_resolved = 0;
 	vr.aiming_last_frame = vr.aiming;
 	vr.aiming = 0;
 	vr.hand_aiming_last_frame = vr.hand_aiming;

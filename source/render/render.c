@@ -436,12 +436,12 @@ static void render_window(
 		rasterizer_transparent_geometry_draw(FALSE);
 		rasterizer_transparent_geometry_stop();
 		/* the fog's screen layers assume a symmetric frustum facing the
-		game's camera: not for the headset's eyes */
-		if (!VR_RENDER_EYE())
+		game's camera: not for the headset's eyes or scope */
+		if (!VR_RENDER_VIEW())
 			structure_render_fog_screen();
 		rasterizer_lens_flares_draw();
 		/* the headset shows the HUD on a layer of its own */
-		if (!VR_RENDER_EYE())
+		if (!VR_RENDER_VIEW())
 		{
 			interface_draw_screen();
 			rasterizer_screen_flash();
@@ -540,7 +540,7 @@ static void render_player_frame(
 
 	render_camera_build_frustum_bounds(camera, &frustum_bounds);
 #ifdef HALO_VR
-	/* an eye's own, off-centre field */
+	/* an eye's own, off-centre field; the scope's narrow one */
 	vr_render_frustum_bounds(&frustum_bounds);
 #endif
 
@@ -574,7 +574,9 @@ static void render_player_frame(
 		&rasterizer_frustum,
 		TRUE);
 
-	if (main_get_window_count() == 1)
+	/* (a mirror's camera assumes the whole screen, which the headset's
+	scope does not fill) */
+	if (main_get_window_count() == 1 && !VR_RENDER_SCOPE())
 	{
 		if (structure_visibility_find_mirror(camera, &frustum, &mirror))
 		{

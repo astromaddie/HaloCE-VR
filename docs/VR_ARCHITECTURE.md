@@ -17,7 +17,11 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
 | 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
 | Vehicles: first-person seats, stick steering | Built, **not yet run on the device** (the headset went offline mid-test). `vr.vehicle_view` "first_person" (default) or "chase"; `vr.vehicle_steering` "stick" (default), "head" or "hand". |
-| Scope, comfort options, foveation | Not started. |
+| VR-native controls, gestures, left-handed play | Built (`vr.controls = "vr"`, default; `"pad"` keeps the Xbox mapping). **Not yet run on the device.** |
+| Aim smoothing when zoomed, haptics | Built, **not yet run on the device.** |
+| Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
+| Far HUD, menu laser pointer | Planned (the LivingFray-based plan's phases 5 and 6). |
+| Comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
 
@@ -67,7 +71,8 @@ Ninja does not rerun Gradle when only Java sources changed (the SDL patch, for e
 **Host (64-bit, `port/android/host/host_xr.c`).** The host owns:
 - the Khronos loader, 1.1.63, fetched from Maven Central with its SHA-256 checked;
 - the instance and a GLES session on the game thread's EGL context;
-- three swapchains: left eye, right eye, and a quad;
+- six swapchains: left eye, right eye, a quad (the flat screen or HUD), the hand's reticle, a
+  fade to black, and the scope;
 - controller actions for the Frame, Touch and Index profiles;
 - recentring.
 
@@ -94,7 +99,8 @@ texture names, which it draws into directly.
 
 **Game side (`port/linux/game/vr_render.c`, `port/linux/include/halo_vr.h`).**
 - **Windows.** `vr_render_windows` turns `main_game_render`'s single player window into four
-  windows: left eye, right eye, HUD, console. `render_frame` then renders them in its own window
+  windows: left eye, right eye, HUD, console. While a hand-aimed weapon is zoomed it makes five:
+  left eye, right eye, scope, HUD, console. `render_frame` then renders them in its own window
   loop. `render.frame_index` advances once per frame, and each eye has its own `window_index`, so
   lens-flare occlusion and fog history stay per eye.
 - **Eye resolve.** `vr_render_window_end` copies each eye's back buffer into its swapchain image.
@@ -124,16 +130,71 @@ texture names, which it draws into directly.
   `collision_test_vector` along the hand's ray meets the world.
 - **Seats.** In vehicle and turret seats the head aims.
 
-**Input.** The headset's controllers merge into the first Xbox pad (`xinput_sdl.c`). The Frame
-controllers map one-to-one onto it (A/B/X/Y, bumpers as white/black, d-pad, view/menu as
-back/start). While the head aims, the right stick is consumed for turning.
+**Input.** The headset's controllers merge into the first Xbox pad (`xinput_sdl.c`). Each frame
+`layout_controls` (`vr_frame.c`) builds that pad from the controllers by `vr.controls`:
+- `"pad"`: the Frame controllers map one-to-one onto the Xbox pad (A/B/X/Y, bumpers as
+  white/black, d-pad, view/menu as back/start).
+- `"vr"` (default), a VR-native layout from each hand's own buttons (`hand_buttons` in the frame):
+
+  | Input | Action |
+  | --- | --- |
+  | Weapon hand's trigger | Fire |
+  | Off hand's trigger | Zoom (the scope) |
+  | Right A | Jump |
+  | Right B | Action / reload |
+  | Right X | Switch grenades |
+  | Right Y | Switch weapons |
+  | Right stick click | Melee |
+  | Weapon hand's bumper | Throw a grenade |
+  | Off hand's bumper | Flashlight |
+  | Left stick | Move; click to crouch |
+  | Right stick | Turn |
+  | Menu | Pause |
+  | View | Back; held 1 s, recentre (with a buzz) |
+
+While the head or hand aims, the right stick is consumed for turning.
+
+**Gestures** (`update_gestures`, either layout; injected in `handle_one_player_input`):
+
+| Gesture | Does | Setting |
+| --- | --- | --- |
+| A hand swung up or down fast | Melee | `melee_speed` (2.5 m/s) |
+| Off hand at the side of the head | Flashlight | `flashlight_distance` (0.2 m) |
+| Head lowered below the height at the last recentre | Crouch (held) | `crouch_height` (0.15 m) |
+| Weapon hand's grip at a shoulder | Switch weapons | `holsters` |
+| Off hand's grip held (with the gun) | Two-handed aim: the gun points from the weapon hand to the off hand | `two_handed` ("grip", "auto", "off") |
+| Palms together, gripping | Swap the weapon hand | |
+
+`vr.left_handed` starts with the gun in the left hand; the first-person model is drawn
+mirrored (`halo_vr_mirror_winding` flips the triangles' winding).
+
+**Weapon feel.** When zoomed, the aim is eased toward the hand's (`steady_aim`, after
+HaloCEVR's half-life formula), steadying the scope. Shots buzz the weapon hand by weapon (and the
+off hand when two-handed), scaled by `vr.haptics`.
+
+**Scope** (`vr.scope`, with the hand aiming). While zoomed:
+- A pass between the eyes and the HUD (window 2, a repeat pass) renders the view along the gun.
+  The camera is the hand's aim, rolled with the gun and kept out of walls. Its field is the middle
+  of the game's zoomed one: half its height for a round sight, the sniper rifle's wide rectangle
+  for the sniper.
+- It draws into a square at the corner of the back buffer, as large as the scope's image (768²),
+  so its cost scales with the scope, not the eyes. It has no HUD, fog screen or mirror, and the
+  first-person gun is left out.
+- `vr_resolve_scope` copies it through a mask (disc or rounded rectangle, a darker rim, a thin
+  cross) into the scope swapchain. The image is shown on a layer held at the gun, at HaloCEVR's
+  per-weapon offsets (pistol, sniper rifle, rocket launcher), `vr.scope_size` across.
+- The eyes are never zoomed: the first-person gun stays in the hand, and the HUD layer leaves out
+  the zoom mask.
 
 ## Measuring without wearing the headset
 
 - `vr.force_render` renders stereo with the headset in standby. It uses a synthetic head and
   hands: the head is turned by `vr.diag_yaw`, the right hand by `vr.diag_hand_yaw`.
 - `vr.dump_frame` and `vr.dump_cinema_frame` write the eyes and HUD of a gameplay or cutscene
-  frame. A dump logs the aim state (seated or on foot, hand or head, yaws).
+  frame, and the scope when one is shown (`vr-scope.bmp`). A dump logs the aim state (seated or
+  on foot, hand or head, yaws).
+- `vr.diag_zoom_seconds` zooms in that long into play, switching first to a weapon that zooms.
+  `vr.diag_two_handed` holds the synthetic left hand on the gun.
 - `vr.timing` logs where a frame's time goes (`[vr-frame]`); `vr.timing_gpu` waits for the GPU
   to time it separately.
 - `debug.telnet_console` opens a script console on 127.0.0.1:2323. Reach it with
@@ -149,7 +210,10 @@ back/start). While the head aims, the right stick is consumed for turning.
 `cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
 ("ik" / "hidden" / "animated"),
 `screen_distance`, `screen_width`, `hud_distance`, `hud_width`, `aim` ("head"/"hand"),
-`weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`.
+`weapon_offset_right`/`_up`/`_back`, `snap_turn`, `smooth_turn_speed`, `vehicle_view`,
+`vehicle_steering`, `controls` ("vr"/"pad"), `move_relative` ("head"/"left"/"right"),
+`two_handed`, `left_handed`, `melee_speed`, `flashlight_distance`, `crouch_height`, `holsters`,
+`haptics`, `scope`, `scope_size` (0.06 m).
 
 Diagnostics:
 - `probe_seconds`: dim colours in each eye.
@@ -160,9 +224,11 @@ Diagnostics:
 
 ## Known gaps and next steps
 
-- **Two-handed aiming.** With the left hand on the foregrip, the left arm snaps to the gun, but
-  the gun's angle still comes from the right controller alone.
-- **Scope zoom.** It is ignored in stereo. A picture-in-picture scope would bring it back.
+- **Scope.** Its offsets and size are HaloCEVR's starting points and need tuning in the headset.
+  Its reticle is our own cross, not the game's (the HUD isn't drawn into it). With the head
+  aiming (`vr.aim = "head"`) a zoom shows nothing.
+- **Gesture thresholds** (melee speed, duck depth, holster spots) are HaloCEVR's defaults and
+  need tuning worn.
 - **Vehicles.** `vr.vehicle_view = "first_person"` makes the director treat every seat as first
   person, which hides your own body. The eyes sit at your character's `head` marker. A seat's
   camera marker is the chase camera's place, so it isn't used.
@@ -177,3 +243,9 @@ Diagnostics:
 - **Comfort options** are missing: no vignette, no seated or standing height.
 - **Map loads** block the game loop. SteamVR shows its own loading state while one runs.
 - **Battery.** The Frame discharges even on the Mac's USB.
+
+## Credits
+
+The controls, gestures, aim smoothing, haptics and scope follow the designs of LivingFray's PC
+mod [HaloCEVR](https://github.com/LivingFray/HaloCEVR), re-implemented here for the decompiled
+game.

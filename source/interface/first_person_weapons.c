@@ -467,6 +467,11 @@ long first_person_weapon_get_local_index(
 void first_person_weapon_draw(
 	void)
 {
+#ifdef HALO_VR
+	/* the scope's view along the gun: the gun is behind it */
+	if (VR_RENDER_SCOPE())
+		return;
+#endif
 	if (render.local_player_index!=NONE)
 	{
 		struct first_person_weapon *first_person_weapon= first_person_weapon_get(render.local_player_index);
@@ -631,6 +636,13 @@ void first_person_weapon_render_update(
 			boolean visible= director_get_perspective(render.local_player_index)==_director_perspective_first_person &&
 				player_control_get_zoom_level(render.local_player_index)==NONE;
 #ifdef HALO_VR
+			/* the headset's eyes are not zoomed: the gun stays in the hand
+			(the scope shows the zoom) */
+			if (director_get_perspective(render.local_player_index)==_director_perspective_first_person &&
+				vr_render_unzoomed_view())
+			{
+				visible= TRUE;
+			}
 			/* put away driving or on a turret (port/linux/game/vr_render.c) */
 			if (vr_render_hide_first_person_weapon())
 				visible= FALSE;

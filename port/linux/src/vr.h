@@ -62,7 +62,7 @@ right (world units) and how far to turn its frustum toward the other eye
 (a tangent); 0 outside one */
 int vr_cinema_eye(int eye, float *offset_units, float *convergence_tangent);
 /* vr.timing: the start (end 0) and end (end 1) of a stereo pass: 0 and 1
-the eyes, 2 the HUD */
+the eyes, 2 the HUD, 5 the scope (halo_vr.h's _vr_render_pass_*) */
 void vr_pass_mark(int pass, int end);
 
 /* ---------- aiming with the head (port/linux/game/vr_render.c)
@@ -102,6 +102,25 @@ camera is (`position`); 0 when it is not tracked */
 int vr_hand_world(int hand, const float position[3], float out_position[3], float out_forward[3], float out_up[3]);
 /* the game's world units per metre (vr.world_scale) */
 float vr_units_per_metre(void);
+
+/* ---------- the scope (vr.scope)
+
+While a hand-aimed weapon is zoomed, its view along the gun is rendered
+into a pass of its own and shown on a small layer held at the gun, as
+through a sight; the eyes stay unzoomed. */
+
+#define VR_SCOPE_ROUND 1   /* a round sight (the pistol's) */
+#define VR_SCOPE_SNIPER 2  /* the sniper rifle's wide one, nearer the eye */
+#define VR_SCOPE_ROCKET 3  /* the rocket launcher's, on its left side */
+/* the scope's camera, from where the game's camera is (`position`): the
+hand's aim, rolled with the gun; and the pixels its image wants. 0 when
+there is none to draw this frame (vr.scope off, the hand not aiming) */
+int vr_scope_view(const float position[3], float out_position[3], float out_forward[3], float out_up[3],
+	int *out_pixels);
+/* copies the scope's view, the square at x, y of `size` pixels in
+`texture` (width x height, row 0 at the top), into the scope's image
+through its sight's shape (VR_SCOPE_*); the layer then shows this frame */
+void vr_resolve_scope(unsigned int texture, int width, int height, int x, int y, int size, int shape);
 /* ---------- gestures (vr_frame.c) */
 
 /* what the gestures ask of the game this frame, each taken once:
