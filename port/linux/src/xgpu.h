@@ -38,6 +38,7 @@ void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int 
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
 void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
+int host_gl_frame_done(unsigned int slot);
 #endif
 
 /* ---------- GL state

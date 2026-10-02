@@ -722,6 +722,8 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	clock_gettime(CLOCK_MONOTONIC, &xr.stats_start);
 	xr.failed = 0;
 	xr.initialized = 1;
+	/* the runtime's GL binding brings its own contexts' trace markers */
+	host_gl_quiet_trace_markers();
 	host_logf(HOST_LOG_INFO, "[openxr] %s, %s: eyes %ux%u (max %ux%u), quad %ux%u, format 0x%llx, frame controller %s",
 		out->runtime, out->system, views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
 		views[0].maxImageRectWidth, views[0].maxImageRectHeight, quad_width, quad_height,

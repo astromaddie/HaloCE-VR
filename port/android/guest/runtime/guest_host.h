@@ -99,6 +99,8 @@ void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int
 the GPU to finish the work last fenced for a slot */
 void host_gl_fence_frame(unsigned int slot);
 void host_gl_wait_frame(unsigned int slot);
+/* 1 once the GPU has passed the work last fenced for the slot, without waiting */
+int host_gl_frame_done(unsigned int slot);
 
 /* ---------- Android */
 

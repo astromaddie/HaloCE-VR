@@ -302,6 +302,8 @@ vertices. */
 #define INDEX_BUFFER_SIZE (8 * 1024 * 1024)
 #endif
 #define VISIBILITY_TEST_SLOTS 4096
+/* the tests a frame can end whose results are kept (d3d8_gl.c, Android) */
+#define VISIBILITY_READBACK_TESTS 1024
 #ifdef HALO_ANDROID
 #define VISIBILITY_QUERY GL_ANY_SAMPLES_PASSED
 #define VISIBILITY_ALL_SAMPLES 1000000
@@ -373,12 +375,23 @@ struct gl_device
 	unsigned long counter_next;
 	unsigned long counter_active;
 	unsigned long counter_of_slot[VISIBILITY_TEST_SLOTS];
-	/* every counter as last read, and whether a test has ended since: the
-	game asks for each test's result in turn, and each read of the buffer
-	waits for the GPU (on Zink a flush and a stall too), so they are read
-	together, once a frame */
+	/* Reading the counters waits for the GPU to finish all queued work (on
+	Zink a flush and a stall too), which kept the CPU and GPU taking turns
+	every frame. Each frame's counters are instead copied, behind that
+	frame's fence, into a buffer of the ring slot it streams through, and
+	read once the GPU has passed the fence: a test's result is the latest
+	the GPU has finished, a frame or two old, which lens flares (the game's
+	only use) do not show. */
+	struct visibility_readback
+	{
+		GLuint buffer;
+		BOOL copied;
+		unsigned long count;
+		unsigned short index[VISIBILITY_READBACK_TESTS];
+		unsigned short counter[VISIBILITY_READBACK_TESTS];
+	} readback[STREAM_BUFFER_RING];
+	GLuint visibility_result[VISIBILITY_TEST_SLOTS];
 	GLuint counter_values[VISIBILITY_TEST_SLOTS];
-	BOOL counter_values_valid;
 #else
 	/* each test's latest result, which the GPU writes (as a query buffer)
 	when the test's draws are done: the game waits for results at the start
@@ -985,6 +998,17 @@ static void gl_initialize(void)
 		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, device.visibility_counters);
 		glBufferData(GL_ATOMIC_COUNTER_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
 		glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+		{
+			int ring;
+
+			for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
+			{
+				glGenBuffers(1, &device.readback[ring].buffer);
+				glBindBuffer(GL_COPY_WRITE_BUFFER, device.readback[ring].buffer);
+				glBufferData(GL_COPY_WRITE_BUFFER, VISIBILITY_TEST_SLOTS * sizeof(GLuint), NULL, GL_STREAM_READ);
+			}
+			glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+		}
 	}
 #endif
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
@@ -1404,9 +1428,16 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 #ifdef HALO_ANDROID
 	if (xgpu_capabilities.atomic_counters)
 	{
+		struct visibility_readback *readback = &device.readback[device.buffer_ring];
+
 		device.counter_of_slot[index] = device.counter_active;
 		device.query_pending[index] = TRUE;
-		device.counter_values_valid = FALSE;
+		if (readback->count < VISIBILITY_READBACK_TESTS)
+		{
+			readback->index[readback->count] = (unsigned short)index;
+			readback->counter[readback->count] = (unsigned short)device.counter_active;
+			readback->count++;
+		}
 		return S_OK;
 	}
 #endif
@@ -1443,6 +1474,22 @@ static GLuint visibility_unscaled(GLuint samples, DWORD index)
 }
 
 #endif
+#ifdef HALO_ANDROID
+/* a ring slot's copied counters, whose frame the GPU has finished, into the
+results of the tests that frame ended */
+static void visibility_readback_collect(int ring)
+{
+	struct visibility_readback *readback = &device.readback[ring];
+	unsigned long test;
+
+	host_gl_read_buffer(readback->buffer, 0, sizeof(device.counter_values), device.counter_values);
+	for (test = 0; test < readback->count; test++)
+		device.visibility_result[readback->index[test]] = device.counter_values[readback->counter[test]];
+	readback->count = 0;
+	readback->copied = FALSE;
+}
+#endif
+
 HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULONGLONG *time_stamp)
 {
 	GLuint available = 0, samples = 0;
@@ -1461,15 +1508,15 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 #ifdef HALO_ANDROID
 	if (xgpu_capabilities.atomic_counters)
 	{
-		/* reading the buffer waits for the draws that counted: all the
-		counters at once */
-		if (!device.counter_values_valid)
+		/* the latest result the GPU has finished (visibility_readback) */
+		int ring;
+
+		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
 		{
-			host_gl_read_buffer(device.visibility_counters, 0, sizeof(device.counter_values),
-				device.counter_values);
-			device.counter_values_valid = TRUE;
+			if (ring != device.buffer_ring && device.readback[ring].copied && host_gl_frame_done((unsigned int)ring))
+				visibility_readback_collect(ring);
 		}
-		samples = device.counter_values[device.counter_of_slot[index]];
+		samples = device.visibility_result[index];
 		if (result)
 			*result = samples;
 		return S_OK;
@@ -3704,9 +3751,24 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		xgpu_gl_state_invalidate();
 		xgpu_texture_cache_begin_frame();
 #ifdef HALO_ANDROID
+		if (xgpu_capabilities.atomic_counters && device.readback[device.buffer_ring].count)
+		{
+			/* this frame's counters, read once the fence below is passed */
+			glBindBuffer(GL_COPY_READ_BUFFER, device.visibility_counters);
+			glBindBuffer(GL_COPY_WRITE_BUFFER, device.readback[device.buffer_ring].buffer);
+			glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0,
+				VISIBILITY_TEST_SLOTS * sizeof(GLuint));
+			glBindBuffer(GL_COPY_READ_BUFFER, 0);
+			glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+			device.readback[device.buffer_ring].copied = TRUE;
+		}
 		host_gl_fence_frame((unsigned int)device.buffer_ring);
 		device.buffer_ring = (device.buffer_ring + 1) % STREAM_BUFFER_RING;
 		host_gl_wait_frame((unsigned int)device.buffer_ring);
+		/* the slot's last frame is done: its results before it is reused */
+		if (device.readback[device.buffer_ring].copied)
+			visibility_readback_collect(device.buffer_ring);
+		device.readback[device.buffer_ring].count = 0;
 		device.stream_buffer = device.stream_buffers[device.buffer_ring];
 		device.index_buffer = device.index_buffers[device.buffer_ring];
 		device.stream_offset = 0;

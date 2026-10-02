@@ -11,7 +11,50 @@ already have host types by then. Only strings need copying back.
 #include <EGL/egl.h>
 #include <GLES3/gl32.h>
 #include <dlfcn.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+/* Valve's Mesa (the Steam Frame's Lepton) writes a marker to the kernel's
+trace_marker around every flush and context switch, a couple of hundred a
+frame, whether or not anything is tracing. The descriptors it holds open on
+that file are pointed at /dev/null instead (not closed: a reused descriptor
+would take the markers somewhere else). Returns how many were. */
+int host_gl_quiet_trace_markers(void)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	struct dirent *entry;
+	int quieted = 0, null_fd;
+
+	if (!directory)
+		return 0;
+	null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
+	while (null_fd >= 0 && (entry = readdir(directory)) != NULL)
+	{
+		char link[64], target[256];
+		ssize_t length;
+		int fd = atoi(entry->d_name);
+
+		if (entry->d_name[0] < '0' || entry->d_name[0] > '9' || fd == null_fd)
+			continue;
+		snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+		length = readlink(link, target, sizeof(target) - 1);
+		if (length <= 0)
+			continue;
+		target[length] = 0;
+		if (strstr(target, "tracing/trace_marker") && dup3(null_fd, fd, O_CLOEXEC) == fd)
+			quieted++;
+	}
+	if (null_fd >= 0)
+		close(null_fd);
+	closedir(directory);
+	if (quieted)
+		host_logf(HOST_LOG_INFO, "trace markers: %d descriptors to /dev/null", quieted);
+	return quieted;
+}
 
 void *host_gl_resolve(const char *name)
 {
@@ -127,6 +170,18 @@ void host_gl_wait_frame(uint32_t slot)
 	glClientWaitSync(frame_fences[slot], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
 	glDeleteSync(frame_fences[slot]);
 	frame_fences[slot] = NULL;
+}
+
+/* 1 once the GPU has passed the work fenced for the slot (or nothing is
+fenced there), without waiting */
+int host_gl_frame_done(uint32_t slot)
+{
+	GLenum status;
+
+	if (slot >= FRAME_FENCE_SLOTS || !frame_fences[slot])
+		return 1;
+	status = glClientWaitSync(frame_fences[slot], 0, 0);
+	return status == GL_ALREADY_SIGNALED || status == GL_CONDITION_SATISFIED;
 }
 
 /* writes data into the buffer bound to target. The renderer streams a

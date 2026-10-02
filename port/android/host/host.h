@@ -92,5 +92,7 @@ void *host_resolve_import(const char *name);
 /* ---------- SDL / GL (host_sdl.c, host_gl.c) */
 
 void *host_gl_resolve(const char *name);
+/* points the GL driver's kernel trace markers at /dev/null (host_gl.c) */
+int host_gl_quiet_trace_markers(void);
 
 #endif
