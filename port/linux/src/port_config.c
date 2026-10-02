@@ -268,6 +268,14 @@ static const struct config_setting config_settings[] =
 		"How far ahead of the eyes the HUD floats, in metres." },
 	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
 		"The HUD's width, in metres (its height is three quarters)." },
+	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
+		"Draw stereo frames with the headset off (in standby), from a head\n"
+		"looking ahead: for testing." },
+	{ "vr.diag_yaw", _config_real, "0.0", "HALO_VR_DIAG_YAW", _environment_value, _platform_vr,
+		"With vr.force_render: turn that head left by this many degrees." },
+	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
+		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
+		"and vr-hud.bmp in the data folder; 0 none." },
 	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
 		"Before the game starts, show dim test colours in each eye for this many\n"
 		"seconds and log the OpenXR frame rate; 0 skips it." },
