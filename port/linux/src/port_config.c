@@ -296,6 +296,11 @@ static const struct config_setting config_settings[] =
 	{ "vr.dump_frame", _config_integer, "0", "HALO_VR_DUMP_FRAME", _environment_value, _platform_vr,
 		"Write the eyes and HUD of this stereo frame as vr-eye0.bmp, vr-eye1.bmp\n"
 		"and vr-hud.bmp in the data folder; 0 none." },
+	{ "vr.timing", _config_boolean, "false", "HALO_VR_TIMING", _environment_value, _platform_vr,
+		"Log where each frame's time goes every 300 frames ([vr-frame])." },
+	{ "vr.timing_gpu", _config_boolean, "false", "HALO_VR_TIMING_GPU", _environment_value, _platform_vr,
+		"With vr.timing: wait for the GPU before showing each frame, to time it\n"
+		"apart (slows the game)." },
 	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
 		"Before the game starts, show dim test colours in each eye for this many\n"
 		"seconds and log the OpenXR frame rate; 0 skips it." },

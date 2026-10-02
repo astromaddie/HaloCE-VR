@@ -23,10 +23,11 @@ void vr_probe(void);
 render targets match the eyes' resolution (d3d8_gl.c); 0 before the
 session exists */
 int vr_screen_scale(float scale[2]);
-/* shows the frame the game drew, read from framebuffer `source` of
-width x height pixels (row 0 at the top), and ends the runtime's frame;
-replaces the flat screen's blit and swap (D3DDevice_Present) */
-void vr_present(unsigned int source, int width, int height);
+/* shows the frame the game drew, read from framebuffer `source` (whose
+colour is `texture`) of width x height pixels (row 0 at the top), and ends
+the runtime's frame; replaces the flat screen's blit and swap
+(D3DDevice_Present) */
+void vr_present(unsigned int source, unsigned int texture, int width, int height);
 /* the headset's controllers as an Xbox pad: 1 with their state when the
 session has input focus */
 int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4]);
@@ -52,6 +53,9 @@ int vr_head_view(const float position[3], const float forward[3],
 /* copies the eye drawn into framebuffer `source` (width x height, row 0
 at the top) into the eye's image */
 void vr_resolve_eye(int eye, unsigned int source, int width, int height);
+/* vr.timing: the start (end 0) and end (end 1) of a stereo pass: 0 and 1
+the eyes, 2 the HUD */
+void vr_pass_mark(int pass, int end);
 
 /* ---------- aiming with the head (port/linux/game/vr_render.c)
 
@@ -92,7 +96,7 @@ void vr_set_reticle(float distance_units);
 #define vr_initialize() ((void)0)
 #define vr_probe() ((void)0)
 #define vr_screen_scale(scale) 0
-#define vr_present(source, width, height) ((void)0)
+#define vr_present(source, texture, width, height) ((void)0)
 #define vr_controller(buttons, trigger, thumb) 0
 #define vr_stereo_begin() 0
 #define vr_aiming() 0

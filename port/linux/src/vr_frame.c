@@ -63,7 +63,21 @@ static struct
 	float diag_yaw;
 	long dump_frame;
 	long stereo_frames;
+	/* timing (vr.timing): milliseconds summed over `timed` frames */
+	int timing, gpu_finish;
+	double frame_start, pass_start, wait_ms, frame_ms, pass_ms[3], gpu_ms, copy_ms, end_ms;
+	long timed;
 } vr;
+
+#include <time.h>
+
+static double now_ms(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return now.tv_sec * 1e3 + now.tv_nsec * 1e-6;
+}
 
 int vr_active(void)
 {
@@ -111,6 +125,8 @@ void vr_initialize(void)
 	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
 	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
 	vr.force_render = config_boolean("vr.force_render");
+	vr.timing = config_boolean("vr.timing");
+	vr.gpu_finish = config_boolean("vr.timing_gpu");
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.dump_frame = config_integer("vr.dump_frame");
 	if (vr.units_per_metre <= 0.0f)
@@ -164,8 +180,11 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 	memcpy(thumb, vr.frame.thumb, sizeof(vr.frame.thumb));
 	if (vr.aiming_last_frame)
 	{
-		/* the right stick turns the heading (vr_aim), the head looks */
-		thumb[2] = thumb[3] = 0.0f;
+		/* the right stick turns the heading (vr_aim), the head looks. Its
+		up and down still reach the game, which the head's aim overrides
+		every frame anyway: scripts that wait for the player to look (the
+		first level's look test) watch the stick, not the view */
+		thumb[2] = 0.0f;
 		/* both sticks pressed together recentre (vr_aim) */
 		if ((*buttons & (HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB)) ==
 			(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB))
@@ -192,8 +211,11 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 is not running (the host polled and slept) */
 static int frame_begin(void)
 {
+	double start;
+
 	if (vr.frame_begun)
 		return 1;
+	start = now_ms();
 	if (!host_xr_begin_frame(&vr.frame))
 	{
 		if (vr.frame.flags & HALO_XR_FRAME_EXIT)
@@ -204,7 +226,22 @@ static int frame_begin(void)
 		return 0;
 	}
 	vr.frame_begun = 1;
+	vr.frame_start = now_ms();
+	vr.wait_ms += vr.frame_start - start;
 	return 1;
+}
+
+void vr_pass_mark(int pass, int end)
+{
+	double now;
+
+	if (!vr.timing || pass < 0 || pass > 2)
+		return;
+	now = now_ms();
+	if (end)
+		vr.pass_ms[pass] += now - vr.pass_start;
+	else
+		vr.pass_start = now;
 }
 
 static void frame_end(const struct halo_xr_layers *layers)
@@ -705,12 +742,134 @@ static void dump_image(unsigned int which, int index, const char *name)
 	free(pixels);
 }
 
-void vr_present(unsigned int source, int width, int height)
+/* The HUD pass draws on transparent black, but the game's blending leaves
+the target's alpha as scratch (none of its HUD writes it). Its copy into the
+layer's image makes each pixel as opaque as it is bright: premultiplied,
+which is how OpenXR blends a layer by default. */
+static const char hud_vertex_source[] =
+	"#version 300 es\n"
+	"out vec2 coordinate;\n"
+	"void main()\n"
+	"{\n"
+	"	vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));\n"
+	"	/* row 0 of the game's target is the top; of OpenXR's, the bottom */\n"
+	"	coordinate = vec2(corner.x, 1.0 - corner.y);\n"
+	"	gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);\n"
+	"}\n";
+static const char hud_fragment_source[] =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"uniform sampler2D hud;\n"
+	"in vec2 coordinate;\n"
+	"out vec4 colour;\n"
+	"void main()\n"
+	"{\n"
+	"	vec3 rgb = texture(hud, coordinate).rgb;\n"
+	"	colour = vec4(rgb, max(rgb.r, max(rgb.g, rgb.b)));\n"
+	"}\n";
+
+static GLuint hud_program, hud_vertex_array;
+
+static GLuint compile_shader(GLenum type, const char *source)
+{
+	GLuint shader = glCreateShader(type);
+	GLint ok = 0;
+
+	glShaderSource(shader, 1, &source, NULL);
+	glCompileShader(shader);
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+	if (!ok)
+	{
+		char log[512];
+
+		glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+		platform_log("vr: HUD shader: %s", log);
+	}
+	return shader;
+}
+
+static int hud_program_ready(void)
+{
+	if (!hud_program)
+	{
+		GLint ok = 0;
+
+		hud_program = glCreateProgram();
+		glAttachShader(hud_program, compile_shader(GL_VERTEX_SHADER, hud_vertex_source));
+		glAttachShader(hud_program, compile_shader(GL_FRAGMENT_SHADER, hud_fragment_source));
+		glLinkProgram(hud_program);
+		glGetProgramiv(hud_program, GL_LINK_STATUS, &ok);
+		if (!ok)
+		{
+			char log[512];
+
+			glGetProgramInfoLog(hud_program, sizeof(log), NULL, log);
+			platform_log("vr: HUD program: %s", log);
+		}
+		glGenVertexArrays(1, &hud_vertex_array);
+	}
+	return hud_program != 0;
+}
+
+/* the HUD from `texture` into the quad's image, its alpha made up */
+static int copy_hud(GLuint texture)
+{
+	unsigned int which = HALO_XR_SWAPCHAIN_QUAD;
+	int index;
+
+	if (!hud_program_ready() || (index = host_xr_acquire(which)) < 0)
+		return 0;
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+		vr.info.images[which][index], 0);
+	glViewport(0, 0, (GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_STENCIL_TEST);
+	glDisable(GL_CULL_FACE);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	if (vr.srgb_write_control)
+		glDisable(GL_FRAMEBUFFER_SRGB_EXT);
+	glUseProgram(hud_program);
+	glUniform1i(glGetUniformLocation(hud_program, "hud"), 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glBindSampler(0, 0);
+	glBindVertexArray(hud_vertex_array);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
+	glUseProgram(0);
+	if (vr.srgb_write_control)
+		glEnable(GL_FRAMEBUFFER_SRGB_EXT);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	if (vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+		dump_image(which, index, "vr-hud.bmp");
+	host_xr_release(which);
+	return 1;
+}
+
+void vr_present(unsigned int source, unsigned int texture, int width, int height)
 {
 	struct halo_xr_layers layers;
+	double start = 0.0, copied = 0.0;
 
 	if (!vr.active || !frame_begin())
 		return;
+	if (vr.timing)
+	{
+		start = now_ms();
+		/* vr.timing_gpu: wait here for the GPU, so the time it takes
+		shows apart from the game's */
+		if (vr.gpu_finish)
+		{
+			glFinish();
+			vr.gpu_ms += now_ms() - start;
+		}
+		vr.frame_ms += start - vr.frame_start;
+		start = now_ms();
+	}
 	memset(&layers, 0, sizeof(layers));
 	if (vr.stereo)
 	{
@@ -718,7 +877,7 @@ void vr_present(unsigned int source, int width, int height)
 		the HUD on a transparent ground, which rides ahead of the head */
 		if (vr.eyes_resolved == 3)
 			layers.flags |= HALO_XR_LAYER_PROJECTION;
-		if (copy_to_swapchain(HALO_XR_SWAPCHAIN_QUAD, source, width, height))
+		if (copy_hud(texture))
 		{
 			layers.flags |= HALO_XR_LAYER_QUAD | HALO_XR_LAYER_QUAD_HEAD_LOCKED | HALO_XR_LAYER_QUAD_ALPHA;
 			layers.quad_pose.position[2] = -vr.hud_distance;
@@ -753,7 +912,28 @@ void vr_present(unsigned int source, int width, int height)
 		layers.quad_size[0] = vr.screen_width;
 		layers.quad_size[1] = vr.screen_width * 0.75f;
 	}
+	if (vr.timing)
+		copied = now_ms();
 	frame_end(&layers);
+	if (vr.timing)
+	{
+		double ended = now_ms();
+
+		vr.copy_ms += copied - start;
+		vr.end_ms += ended - copied;
+		if (++vr.timed == 300)
+		{
+			double n = (double)vr.timed;
+
+			platform_log("[vr-frame] %s ms a frame: wait %.2f, game %.2f (left eye %.2f, right eye %.2f, HUD %.2f; "
+				"GPU finish %.2f), copies %.2f, end %.2f",
+				vr.stereo ? "stereo" : "flat", vr.wait_ms / n, vr.frame_ms / n, vr.pass_ms[0] / n, vr.pass_ms[1] / n,
+				vr.pass_ms[2] / n, vr.gpu_ms / n, vr.copy_ms / n, vr.end_ms / n);
+			vr.timed = 0;
+			vr.wait_ms = vr.frame_ms = vr.gpu_ms = vr.copy_ms = vr.end_ms = 0.0;
+			vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = 0.0;
+		}
+	}
 	if (vr.stereo)
 		vr.stereo_frames++;
 	vr.stereo = 0;

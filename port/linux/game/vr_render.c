@@ -12,6 +12,8 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "cutscene/cinematics.h"
 #include "render/render_cameras.h"
 #include "game/players.h"
+#include "scenario/scenario.h"
+#include "scenario/scenario_definitions.h"
 #include "game/game.h"
 #include "objects/objects.h"
 #include "physics/collisions.h"
@@ -76,6 +78,8 @@ short vr_render_windows(
 		windows[0].local_player_index == NONE ||
 		windows[0].console_window ||
 		cinematic_in_progress() ||
+		/* the main menu's scene stays behind its menus, on the flat screen */
+		global_scenario_get()->type == _scenario_type_main_menu ||
 		!vr_stereo_begin())
 	{
 		return window_count;
@@ -139,11 +143,13 @@ void vr_render_window_begin(
 {
 	vr_render_pass = vr_render.stereo && window_index <= _vr_render_pass_hud ?
 		window_index : _vr_render_pass_none;
+	vr_pass_mark(vr_render_pass, 0);
 }
 
 void vr_render_window_end(
 	short window_index)
 {
+	vr_pass_mark(vr_render_pass, 1);
 	if (vr_render.stereo && window_index <= _vr_render_pass_right_eye)
 		halo_vr_resolve_eye(window_index);
 	vr_render_pass = _vr_render_pass_none;

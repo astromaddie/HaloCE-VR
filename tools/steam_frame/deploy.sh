@@ -47,7 +47,7 @@ fi
 if [[ -n "$maps" ]]; then
     [[ -f "$maps/ui.map" ]] || { echo "$maps has no ui.map" >&2; exit 1; }
     ssh "$frame_host" 'mkdir -p ~/Documents/HaloCE/maps'
-    rsync -a --info=progress2 "$maps/" "$frame_host:Documents/HaloCE/maps/"
+    rsync -a --partial "$maps/" "$frame_host:Documents/HaloCE/maps/"
 fi
 
 if ((${#settings[@]})); then

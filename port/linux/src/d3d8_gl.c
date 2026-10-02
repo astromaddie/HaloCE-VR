@@ -3671,7 +3671,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		if (vr_active())
 		{
 			/* the headset's frame instead of the window's */
-			vr_present(framebuffer_get(back_buffer->target.texture, 0), (int)back_buffer->target.gl_width,
+			vr_present(framebuffer_get(back_buffer->target.texture, 0), back_buffer->target.texture,
+				(int)back_buffer->target.gl_width,
 				(int)back_buffer->target.gl_height);
 		}
 		else
