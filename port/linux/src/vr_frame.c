@@ -106,6 +106,8 @@ static struct
 	float smoothed[3];
 	/* vr.haptics: the strength of every buzz */
 	float haptics;
+	/* vr_request_exit: when to exit regardless (monotonic milliseconds), 0 not asked */
+	double exit_deadline;
 	/* what the gestures ask of the game, for it to take (vr_take_actions) */
 	unsigned int actions;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
@@ -157,6 +159,18 @@ static double now_ms(void)
 int vr_active(void)
 {
 	return vr.active;
+}
+
+void vr_request_exit(void)
+{
+	if (!vr.active)
+		exit(0);
+	/* the session goes STOPPING (the host ends it), then EXITING, which
+	frame_begin turns into the exit; this waits no longer than three
+	seconds for that */
+	platform_log("vr: asking the runtime to end the session");
+	host_xr_request_exit();
+	vr.exit_deadline = now_ms() + 3000.0;
 }
 
 /* the HUD's modes (vr.hud_mode), after the cross-port standard: far (the
@@ -735,6 +749,11 @@ static int frame_begin(void)
 	if (vr.frame_begun)
 		return 1;
 	start = now_ms();
+	if (vr.exit_deadline > 0.0 && start > vr.exit_deadline)
+	{
+		platform_log("vr: the runtime has not ended the session; exiting");
+		exit(0);
+	}
 	if (!host_xr_begin_frame(&vr.frame))
 	{
 		if (vr.frame.flags & HALO_XR_FRAME_EXIT)

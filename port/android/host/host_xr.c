@@ -1270,4 +1270,19 @@ void host_xr_haptic(uint32_t hand, float amplitude, float seconds)
 	xrApplyHapticFeedback(xr.session, &info, (const XrHapticBaseHeader *)&vibration);
 }
 
+/* the player asked to quit: the runtime takes the session through STOPPING
+(session_state_changed ends it) to EXITING, and host_xr_begin_frame then
+reports HALO_XR_FRAME_EXIT. With no running session there is nothing to wait
+for. */
+void host_xr_request_exit(void)
+{
+	if (!xr.initialized || !xr.running)
+	{
+		xr.exiting = 1;
+		return;
+	}
+	if (!check(xrRequestExitSession(xr.session), "xrRequestExitSession"))
+		xr.exiting = 1;
+}
+
 #endif /* HALO_VR */

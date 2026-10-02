@@ -32,6 +32,12 @@ colour is `texture`) of width x height pixels (row 0 at the top), and ends
 the runtime's frame; replaces the flat screen's blit and swap
 (D3DDevice_Present) */
 void vr_present(unsigned int source, unsigned int texture, int width, int height);
+/* quits the game cleanly: asks the runtime to end the session
+(xrRequestExitSession), whose state changes the frame loop already follows
+to the end, and exits once the runtime says it has ended (or after three
+seconds, if it never does); exits at once when there is no session. The
+VR settings' QUIT TO STEAM */
+void vr_request_exit(void);
 /* the headset's controllers as an Xbox pad: 1 with their state when the
 session has input focus */
 int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4]);

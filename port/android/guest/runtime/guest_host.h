@@ -137,5 +137,9 @@ void host_xr_recenter(unsigned int flags);
 or 0 when the runtime cannot change it */
 float host_xr_set_refresh_rate(float hertz);
 void host_xr_haptic(unsigned int hand, float amplitude, float seconds);
+/* xrRequestExitSession: the runtime ends the session through its state
+changes (STOPPING, then EXITING, which host_xr_begin_frame reports as
+HALO_XR_FRAME_EXIT); without a running session it reports the exit at once */
+void host_xr_request_exit(void);
 
 #endif

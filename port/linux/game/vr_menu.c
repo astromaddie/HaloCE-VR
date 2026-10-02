@@ -12,7 +12,10 @@ and boxes, with a list of settings in two columns where the list and the
 mission objectives were. Each setting is a button cloned from "RESUME
 GAME": A or right steps it to its next value, left to its previous; B goes
 back to the pause menu. The settings are written into config.toml as they
-change, and the VR layer takes them up at once (vr_reload_settings).
+change, and the VR layer takes them up at once (vr_reload_settings). The
+last item, QUIT TO STEAM, is not a setting: A asks "SURE?", and A again
+(within a few seconds) ends the OpenXR session and exits (vr_request_exit);
+left, B, another item or the time puts it back.
 
 The widget code calls back here for the text of these buttons (a game data
 input function: VR_MENU_GAME_DATA_FUNCTION) and for their changes (event
@@ -39,6 +42,8 @@ handler functions: VR_MENU_NEXT_FUNCTION, VR_MENU_PREVIOUS_FUNCTION).
 /* port/linux/src/platform.h (a variadic call needs its prototype in scope
 on the Android guest's ABI) */
 void platform_log(const char *format, ...);
+/* source/cseries/cseries_windows.c */
+unsigned long system_milliseconds(void);
 /* source/cache/cache_files.c */
 long cache_file_add_tag(unsigned long group_tag, unsigned long parent_group_tag, char *name, void *base_address);
 
@@ -120,6 +125,8 @@ enum
 	_vr_setting_boolean,
 	_vr_setting_real,
 	_vr_setting_string,
+	/* not a setting: quits the game, after a second press of A */
+	_vr_setting_quit,
 };
 
 static struct vr_menu_setting
@@ -143,7 +150,12 @@ static struct vr_menu_setting
 	{ "VEHICLES", "vr.vehicle_view", _vr_setting_string, 2, { { "INSIDE", "first_person" }, { "CHASE", "chase" } } },
 	{ "STEERING", "vr.vehicle_steering", _vr_setting_string, 3, { { "STICK", "stick" }, { "HEAD", "head" }, { "HAND", "hand" } } },
 	{ "CUTSCENES", "vr.cinema_3d", _vr_setting_boolean, 2, { { "3D", "true" }, { "FLAT", "false" } } },
+	/* (the right box's last row: the left box has five, the right now has five too) */
+	{ "QUIT TO STEAM", NULL, _vr_setting_quit, 1, { { "", "" } } },
 };
+
+/* how long QUIT TO STEAM waits for its second press (milliseconds) */
+#define VR_MENU_QUIT_CONFIRM_MS 5000
 
 #define VR_MENU_SETTING_COUNT ((long)NUMBEROF(vr_menu_settings))
 /* the settings in the left box; the rest go in the right */
@@ -182,12 +194,28 @@ static long vr_menu_value_index(
 
 static struct
 {
+	/* when QUIT TO STEAM's "SURE?" runs out (monotonic milliseconds), 0 when
+	it has not been asked */
+	long long quit_asked_until;
 	/* the tags this made for the map loaded, and what they point at */
 	long button_tag_index, screen_tag_index, list_tag_index;
 	long setting_tag_indices[NUMBEROF(vr_menu_settings)];
 	void *allocations[64];
 	long allocation_count;
 } vr_menu;
+
+static long long vr_menu_milliseconds(
+	void)
+{
+	return (long long)system_milliseconds();
+}
+
+/* QUIT TO STEAM has been asked to confirm and is waiting */
+static boolean vr_menu_quit_asked(
+	void)
+{
+	return vr_menu.quit_asked_until && vr_menu_milliseconds() < vr_menu.quit_asked_until;
+}
 
 static void *vr_menu_allocate(
 	long size)
@@ -453,10 +481,18 @@ boolean vr_menu_setting_text(
 	else
 	{
 		struct vr_menu_setting const *setting = &vr_menu_settings[setting_index];
-		long value_index = vr_menu_value_index(setting);
 
-		snprintf(line, sizeof(line), "%s: %s", setting->label,
-			value_index != NONE ? setting->values[value_index].label : "CUSTOM");
+		if (setting->type == _vr_setting_quit)
+		{
+			snprintf(line, sizeof(line), "%s", vr_menu_quit_asked() ? "SURE? A TO QUIT" : setting->label);
+		}
+		else
+		{
+			long value_index = vr_menu_value_index(setting);
+
+			snprintf(line, sizeof(line), "%s: %s", setting->label,
+				value_index != NONE ? setting->values[value_index].label : "CUSTOM");
+		}
 	}
 	for (index = 0; line[index] && index < size - 1; index++)
 		text[index] = (wchar_t)(unsigned char)line[index];
@@ -477,6 +513,29 @@ boolean vr_menu_setting_change(
 	if (setting_index < 0)
 		return FALSE;
 	setting = &vr_menu_settings[setting_index];
+	if (setting->type == _vr_setting_quit)
+	{
+		/* a press of A (or right) asks, a second one within the time quits;
+		left puts it back */
+		if (step > 0 && vr_menu_quit_asked())
+		{
+			platform_log("vr: quit to Steam (VR settings)");
+			vr_menu.quit_asked_until = 0;
+			vr_request_exit();
+		}
+		else if (step > 0)
+		{
+			vr_menu.quit_asked_until = vr_menu_milliseconds() + VR_MENU_QUIT_CONFIRM_MS;
+			platform_log("vr: quit to Steam asked; A again to confirm");
+		}
+		else
+		{
+			vr_menu.quit_asked_until = 0;
+		}
+		return TRUE;
+	}
+	/* (another item changing puts the quit back) */
+	vr_menu.quit_asked_until = 0;
 	value_index = vr_menu_value_index(setting);
 	value_index = value_index == NONE ? 0 :
 		(value_index + step + setting->value_count) % setting->value_count;
