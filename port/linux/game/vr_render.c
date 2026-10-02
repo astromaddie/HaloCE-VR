@@ -21,6 +21,8 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "models/model_animation_definitions.h"
 #include "units/unit_definitions.h"
 #include "tag_files/tag_groups.h"
+#include "tag_files/tag_files.h"
+#include "items/weapons.h"
 
 #include "halo_vr.h"
 #include "../src/vr.h"
@@ -463,6 +465,7 @@ void vr_player_control_facing(
 	unit_index = player_index != NONE ? player_get(player_index)->unit_index : NONE;
 	vr_diag_drive(unit_index);
 	vr_update_seat(unit_index);
+	vr_set_zoom_level(player_control_get_zoom_level(local_player_index));
 	seated = vr_render.seat.seated;
 	angles = player_control_get_facing_angles(local_player_index);
 	/* a driver steered by the stick (vr.vehicle_steering "stick"): the game
@@ -507,6 +510,70 @@ void vr_player_control_facing(
 			}
 		}
 	}
+}
+
+/* the buzz of a shot, by weapon (its tag's name): strength and seconds */
+static void vr_weapon_buzz(
+	long weapon_index,
+	real *amplitude,
+	real *seconds)
+{
+	static struct { char const *name; real amplitude, seconds; } const buzzes[] =
+	{
+		{ "pistol", 0.6f, 0.06f },        /* the plasma pistol is matched first */
+		{ "shotgun", 1.0f, 0.12f },
+		{ "sniper", 1.0f, 0.12f },
+		{ "rocket", 1.0f, 0.20f },
+		{ "fuel rod", 0.9f, 0.15f },
+		{ "flamethrower", 0.3f, 0.05f },
+		{ "needler", 0.3f, 0.04f },
+		{ "plasma rifle", 0.3f, 0.04f },
+		{ "assault rifle", 0.35f, 0.04f },
+	};
+	char const *name = tag_get_name(weapon_get(weapon_index)->definition_index);
+	int index;
+
+	*amplitude = 0.5f;
+	*seconds = 0.05f;
+	if (name && strstr(name, "plasma pistol"))
+	{
+		*amplitude = 0.4f;
+		return;
+	}
+	for (index = 0; name && index < (int)(sizeof(buzzes) / sizeof(buzzes[0])); index++)
+	{
+		if (strstr(name, buzzes[index].name))
+		{
+			*amplitude = buzzes[index].amplitude;
+			*seconds = buzzes[index].seconds;
+			return;
+		}
+	}
+}
+
+void vr_render_weapon_fired(
+	long weapon_index,
+	long player_index)
+{
+	static long last_tick = NONE, last_weapon = NONE;
+	real amplitude, seconds;
+	int hand;
+
+	if (!vr_active() || player_index == NONE ||
+		player_index != local_player_get_player_index(local_player_get_next(NONE)))
+	{
+		return;
+	}
+	/* a shotgun's pellets are one shot */
+	if (last_tick == game_time_get() && last_weapon == weapon_index)
+		return;
+	last_tick = game_time_get();
+	last_weapon = weapon_index;
+	vr_weapon_buzz(weapon_index, &amplitude, &seconds);
+	hand = vr_weapon_hand();
+	vr_haptic(hand, amplitude, seconds);
+	if (vr_two_handed())
+		vr_haptic(1 - hand, amplitude * 0.6f, seconds);
 }
 
 unsigned long vr_render_actions(

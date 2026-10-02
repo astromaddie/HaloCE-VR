@@ -229,6 +229,7 @@ symbols in this file:
 #include "sound/sound_definitions.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "halo_vr.h"
 
 /* port/linux/game/pal_tags.c's */
 short pal_tags_first_person_frames(long graph_index, short animation_index, short frames);
@@ -2264,6 +2265,10 @@ static void trigger_create_projectiles(
 					&origin);
 
 				target_object_index= player_aim_projectile(player_index, &origin, &forward);
+#ifdef HALO_VR
+				/* the headset's hands feel the shot (port/linux/game/vr_render.c) */
+				vr_render_weapon_fired(weapon_index, player_index);
+#endif
 			}
 			else if (actor_index!=NONE)
 			{

@@ -113,6 +113,12 @@ VR_ACTION_* */
 unsigned int vr_take_actions(void);
 /* the hand holding the weapon: 0 left, 1 right */
 int vr_weapon_hand(void);
+/* 1 while the gun is held in both hands */
+int vr_two_handed(void);
+/* a buzz on a hand (0 left, 1 right), scaled by vr.haptics */
+void vr_haptic(int hand, float amplitude, float seconds);
+/* the player's weapon zoom level (-1 none), for the aim's smoothing */
+void vr_set_zoom_level(int zoom_level);
 /* how far along the hand's ray the reticle shows this frame, in world units */
 void vr_set_reticle(float distance_units);
 

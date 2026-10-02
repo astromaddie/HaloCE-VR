@@ -54,6 +54,9 @@ void vr_render_window_end(short window_index);
 void vr_render_frustum_bounds(union real_rectangle2d *bounds);
 /* the camera the first-person weapon is posed from: the head's in stereo */
 void vr_render_weapon_camera(struct render_camera *camera);
+/* trigger_create_projectiles: a player's weapon fired a projectile (the
+local player's hands feel it) */
+void vr_render_weapon_fired(long weapon_index, long player_index);
 /* first_person_weapon_build_node_matrices: the arms of the first-person
 weapon posed for the hand that aims (vr.arms) */
 struct real_matrix4x3;

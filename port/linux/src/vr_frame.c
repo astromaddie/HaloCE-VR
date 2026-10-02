@@ -90,6 +90,12 @@ static struct
 	int holsters, two_handed_mode; /* 0 off, 1 grip, 2 auto */
 	float melee_rearm;
 	int flashlight_armed, crouching, in_holster, two_hand_held;
+	/* the aim's smoothing by zoom level (vr_set_zoom_level), as the PC mod
+	HaloCEVR's: its direction, eased toward the hand's */
+	int zoom_level, smoothed_valid;
+	float smoothed[3];
+	/* vr.haptics: the strength of every buzz */
+	float haptics;
 	/* what the gestures ask of the game, for it to take (vr_take_actions) */
 	unsigned int actions;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
@@ -181,6 +187,8 @@ void vr_initialize(void)
 	vr.flashlight_distance = (float)config_real("vr.flashlight_distance");
 	vr.crouch_height = (float)config_real("vr.crouch_height");
 	vr.holsters = config_boolean("vr.holsters");
+	vr.haptics = (float)config_real("vr.haptics");
+	vr.zoom_level = -1;
 	vr.flashlight_armed = 1;
 	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
 	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
@@ -243,6 +251,7 @@ static float wrap_angle(float angle);
 
 static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
+static void look_rotation(const float forward[3], const float up[3], float out[4]);
 
 /* the VR layout (vr.controls "vr") on the Xbox pad the game reads, whose
 buttons do (input_abstraction.c): A jump, B melee, X action and reload,
@@ -291,8 +300,8 @@ static void layout_controls(void)
 			host_xr_recenter();
 			vr.heading_valid = 0;
 			vr.view_recentred = 1;
-			host_xr_haptic(0, 0.6f, 0.08f);
-			host_xr_haptic(1, 0.6f, 0.08f);
+			vr_haptic(0, 0.6f, 0.08f);
+			vr_haptic(1, 0.6f, 0.08f);
 		}
 	}
 	else
@@ -373,7 +382,7 @@ static void update_gestures(void)
 			{
 				vr.actions |= VR_ACTION_MELEE;
 				vr.melee_rearm = melee_rearm_seconds;
-				host_xr_haptic((unsigned int)hand, 0.5f, 0.05f);
+				vr_haptic(hand, 0.5f, 0.05f);
 			}
 		}
 	}
@@ -403,7 +412,7 @@ static void update_gestures(void)
 		{
 			vr.actions |= VR_ACTION_FLASHLIGHT;
 			vr.flashlight_armed = 0;
-			host_xr_haptic((unsigned int)o, 0.4f, 0.04f);
+			vr_haptic(o, 0.4f, 0.04f);
 		}
 		else if (distance > vr.flashlight_distance + 0.05f)
 		{
@@ -441,12 +450,12 @@ static void update_gestures(void)
 		in = distance3(vr.frame.grip[w].position, left_holster) < holster_reach ||
 			distance3(vr.frame.grip[w].position, right_holster) < holster_reach;
 		if (in && !vr.in_holster)
-			host_xr_haptic((unsigned int)w, 0.25f, 0.03f);
+			vr_haptic(w, 0.25f, 0.03f);
 		vr.in_holster = in;
 		if (in && vr.grip_pressed[w])
 		{
 			vr.actions |= VR_ACTION_SWITCH_WEAPON;
-			host_xr_haptic((unsigned int)w, 0.6f, 0.06f);
+			vr_haptic(w, 0.6f, 0.06f);
 		}
 	}
 	else
@@ -462,8 +471,8 @@ static void update_gestures(void)
 		{
 			vr.weapon_hand = o;
 			vr.two_hand_held = 0;
-			host_xr_haptic(0, 0.5f, 0.06f);
-			host_xr_haptic(1, 0.5f, 0.06f);
+			vr_haptic(0, 0.5f, 0.06f);
+			vr_haptic(1, 0.5f, 0.06f);
 			platform_log("vr: the weapon changes to the %s hand", vr.weapon_hand ? "right" : "left");
 			return;
 		}
@@ -472,6 +481,55 @@ static void update_gestures(void)
 	}
 	if (!vr.grip_held[o])
 		vr.two_hand_held = 0;
+}
+
+/* zoomed in, the aim is eased toward the hand's: at zoom 1 by about 15
+ms, at zoom 2 about 25 ms (the PC mod HaloCEVR's half-life formula,
+h = 90 log2(1 - e^(-20s/9)) for s 0.4 and 0.6), steadying a scope */
+static void steady_aim(void)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
+	float target[3], up[3], amount, half_life, t, length, seconds;
+	int axis;
+
+	rotate(vr.aim_pose.orientation, xr_forward, target);
+	amount = vr.zoom_level == 0 ? 0.4f : vr.zoom_level >= 1 ? 0.6f : 0.0f;
+	if (amount <= 0.0f || !vr.smoothed_valid)
+	{
+		memcpy(vr.smoothed, target, sizeof(target));
+		vr.smoothed_valid = 1;
+		return;
+	}
+	seconds = (float)(vr.frame.predicted_display_period * 1e-9);
+	half_life = 90.0f * log2f(1.0f - expf(-20.0f * amount / 9.0f));
+	t = 1.0f - exp2f(seconds * half_life);
+	for (axis = 0; axis < 3; axis++)
+		vr.smoothed[axis] += (target[axis] - vr.smoothed[axis]) * t;
+	length = sqrtf(vr.smoothed[0] * vr.smoothed[0] + vr.smoothed[1] * vr.smoothed[1] + vr.smoothed[2] * vr.smoothed[2]);
+	if (length < 1e-5f)
+		return;
+	for (axis = 0; axis < 3; axis++)
+		vr.smoothed[axis] /= length;
+	rotate(vr.aim_pose.orientation, xr_up, up);
+	look_rotation(vr.smoothed, up, vr.aim_pose.orientation);
+}
+
+void vr_set_zoom_level(int zoom_level)
+{
+	vr.zoom_level = zoom_level;
+}
+
+int vr_two_handed(void)
+{
+	return vr.two_handed;
+}
+
+void vr_haptic(int hand, float amplitude, float seconds)
+{
+	if (vr.haptics <= 0.0f || hand < 0 || hand > 1)
+		return;
+	amplitude *= vr.haptics;
+	vr_haptic(hand, amplitude > 1.0f ? 1.0f : amplitude, seconds);
 }
 
 unsigned int vr_take_actions(void)
@@ -916,7 +974,9 @@ static void look_rotation(const float forward[3], const float up[3], float out[4
 the gun ahead of it (between 12 and 60 cm along the right hand's aim and
 within 35 degrees of it), when the gun points from the right hand to the
 left, as a rifle held in both does */
-static void update_aim_pose(void)
+static void steady_aim(void);
+
+static void compute_aim_pose(void)
 {
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
 	float aim[3], between[3], length, up[3];
@@ -952,7 +1012,13 @@ static void update_aim_pose(void)
 	vr.two_handed = 1;
 }
 
-/* the right hand's aim in Halo's axes at heading 0; 0 untracked */
+static void update_aim_pose(void)
+{
+	compute_aim_pose();
+	steady_aim();
+}
+
+/* the weapon hand's aim in Halo's axes at heading 0; 0 untracked */
 static int hand_forward(float out[3])
 {
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };

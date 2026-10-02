@@ -331,6 +331,8 @@ static const struct config_setting config_settings[] =
 	{ "vr.crouch_height", _config_real, "0.15", "HALO_VR_CROUCH_HEIGHT", _environment_value, _platform_vr,
 		"Ducking this far (metres) below your height at the last recentre\n"
 		"crouches; 0 turns it off." },
+	{ "vr.haptics", _config_real, "1.0", "HALO_VR_HAPTICS", _environment_value, _platform_vr,
+		"The strength of the controllers' buzz (shots, gestures), 0 to 1; 0 none." },
 	{ "vr.holsters", _config_boolean, "true", "HALO_VR_HOLSTERS", _environment_value, _platform_vr,
 		"The weapon hand's grip at either shoulder switches weapons." },
 	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
