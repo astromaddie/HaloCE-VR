@@ -623,6 +623,22 @@ static void handle_one_player_input(
 		local_player_index,
 		time_delta_sec,
 		&input);
+#ifdef HALO_VR
+	/* the headset's gestures (port/linux/game/vr_render.c): before a
+	cutscene's inhibition below clears them with the rest */
+	{
+		unsigned long actions = vr_render_actions(local_player_index);
+
+		if (actions & VR_RENDER_ACTION_MELEE)
+			SET_FLAG(input.unit_control_flags, _unit_control_use_equipment_bit, TRUE);
+		if (actions & VR_RENDER_ACTION_FLASHLIGHT)
+			SET_FLAG(input.unit_control_flags, _unit_control_integrated_light_bit, TRUE);
+		if (actions & VR_RENDER_ACTION_CROUCH)
+			SET_FLAG(input.unit_control_flags, _unit_control_crouch_modifier_bit, TRUE);
+		if (actions & VR_RENDER_ACTION_SWITCH_WEAPON)
+			SET_FLAG(input.player_control_flags, _player_control_rotate_weapons_bit, TRUE);
+	}
+#endif
 	if (local_player_get_player_index(local_player_index) != NONE)
 	{
 		match_assert_valid_real(

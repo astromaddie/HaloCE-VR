@@ -513,6 +513,10 @@ void first_person_weapon_draw(
 						model_effect.type= _render_model_effect_type_none;
 					}
 
+#ifdef HALO_VR
+					/* held in the left hand the model is mirrored (vr_render.c) */
+					halo_vr_mirror_winding(vr_render_first_person_mirrored());
+#endif
 					if (first_person_weapon->weapon_node_remapping_table_valid &&
 						weapon_definition->weapon.interface_definition.first_person_model.index!=NONE)
 					{
@@ -562,6 +566,9 @@ void first_person_weapon_draw(
 							0,
 							FLAG(_render_model_first_person_bit));
 					}
+#ifdef HALO_VR
+					halo_vr_mirror_winding(FALSE);
+#endif
 				}
 			}
 		}

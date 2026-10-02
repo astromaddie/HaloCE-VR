@@ -69,6 +69,29 @@ static struct
 	the gun the line from the right to the left (vr.two_handed) */
 	struct halo_xr_pose aim_pose;
 	int two_handed_enabled, two_handed;
+	/* the controls (vr.controls): the VR layout or the Xbox pad's; this
+	frame's pad as the game is to see it; the View button's hold (seconds,
+	for a recentre) and the zoom trigger's state; vr.move_relative */
+	int layout_vr;
+	unsigned int pad_buttons;
+	float pad_trigger[2];
+	double view_held;
+	int view_recentred, back_pulse, zoom_down;
+	int move_relative; /* 0 head, 1 left hand, 2 right hand */
+	/* the hand that holds the weapon (vr.left_handed; swapped by bringing
+	the palms together and gripping) */
+	int weapon_hand;
+	/* the gestures: each grip held (with hysteresis), each hand's last
+	place, and their thresholds and states (vr.melee_speed,
+	vr.flashlight_distance, vr.crouch_height, vr.holsters, vr.two_handed) */
+	int grip_held[2], grip_pressed[2], hands_last_valid;
+	float hands_last[2][3];
+	float melee_speed, flashlight_distance, crouch_height;
+	int holsters, two_handed_mode; /* 0 off, 1 grip, 2 auto */
+	float melee_rearm;
+	int flashlight_armed, crouching, in_holster, two_hand_held;
+	/* what the gestures ask of the game, for it to take (vr_take_actions) */
+	unsigned int actions;
 	/* the reticle where the hand's aim meets the world, metres away; 0 hides it */
 	float reticle_distance;
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
@@ -141,7 +164,24 @@ void vr_initialize(void)
 	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
 	vr.snap_armed = 1;
 	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
-	vr.two_handed_enabled = config_boolean("vr.two_handed");
+	vr.layout_vr = strcmp(config_string("vr.controls"), "pad") != 0;
+	vr.move_relative = !strcmp(config_string("vr.move_relative"), "left") ? 1 :
+		!strcmp(config_string("vr.move_relative"), "right") ? 2 : 0;
+	{
+		const char *mode = config_string("vr.two_handed");
+
+		/* "grip" (the off hand's grip on the gun), "auto" (the off hand held
+		ahead along the gun), "off"; an older boolean true means auto */
+		vr.two_handed_mode = !strcmp(mode, "off") || !strcmp(mode, "false") ? 0 :
+			!strcmp(mode, "auto") || !strcmp(mode, "true") ? 2 : 1;
+		vr.two_handed_enabled = vr.two_handed_mode != 0;
+	}
+	vr.weapon_hand = config_boolean("vr.left_handed") ? 0 : 1;
+	vr.melee_speed = (float)config_real("vr.melee_speed");
+	vr.flashlight_distance = (float)config_real("vr.flashlight_distance");
+	vr.crouch_height = (float)config_real("vr.crouch_height");
+	vr.holsters = config_boolean("vr.holsters");
+	vr.flashlight_armed = 1;
 	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
 	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
 	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
@@ -201,12 +241,276 @@ int vr_screen_scale(float scale[2])
 
 static float wrap_angle(float angle);
 
+static void rotate(const float q[4], const float v[3], float out[3]);
+static void to_halo(const float v[3], float cosine, float sine, float out[3]);
+
+/* the VR layout (vr.controls "vr") on the Xbox pad the game reads, whose
+buttons do (input_abstraction.c): A jump, B melee, X action and reload,
+Y switch weapons, white flashlight, black switch grenades, left trigger
+grenade, right trigger fire, left stick crouch, right stick zoom, start,
+back */
+static void layout_controls(void)
+{
+	static const float zoom_on = 0.6f, zoom_off = 0.45f;
+	unsigned int right = vr.frame.hand_buttons[1], left = vr.frame.hand_buttons[0];
+	unsigned int buttons = 0;
+	double seconds = vr.frame.predicted_display_period * 1e-9;
+
+	if (!vr.layout_vr)
+	{
+		vr.pad_buttons = vr.frame.buttons;
+		memcpy(vr.pad_trigger, vr.frame.trigger, sizeof(vr.pad_trigger));
+		return;
+	}
+	if (right & HALO_XR_HAND_SOUTH) buttons |= HALO_XR_BUTTON_A;           /* jump */
+	if (right & HALO_XR_HAND_EAST) buttons |= HALO_XR_BUTTON_X;            /* action, reload */
+	if (right & HALO_XR_HAND_WEST) buttons |= HALO_XR_BUTTON_BLACK;        /* switch grenades */
+	if (right & HALO_XR_HAND_NORTH) buttons |= HALO_XR_BUTTON_Y;           /* switch weapons */
+	if (right & HALO_XR_HAND_STICK) buttons |= HALO_XR_BUTTON_B;           /* melee (and the swing) */
+	if (vr.frame.hand_buttons[1 - vr.weapon_hand] & HALO_XR_HAND_BUMPER)
+		buttons |= HALO_XR_BUTTON_WHITE;                                    /* flashlight, the off hand's */
+	if (left & HALO_XR_HAND_STICK) buttons |= HALO_XR_BUTTON_LEFT_THUMB;   /* crouch */
+	if ((right | left) & HALO_XR_HAND_MENU) buttons |= HALO_XR_BUTTON_START;
+	/* controllers with two face buttons a hand (Touch, Index): the left's
+	lower switches grenades, its upper goes back */
+	if (left & HALO_XR_HAND_SOUTH) buttons |= HALO_XR_BUTTON_BLACK;
+	/* the off hand's trigger zooms */
+	if (vr.frame.trigger[1 - vr.weapon_hand] > zoom_on)
+		vr.zoom_down = 1;
+	else if (vr.frame.trigger[1 - vr.weapon_hand] < zoom_off)
+		vr.zoom_down = 0;
+	if (vr.zoom_down)
+		buttons |= HALO_XR_BUTTON_RIGHT_THUMB;
+	/* View (Touch: the left's upper face button): a press goes back (as the
+	button lets go), a hold of a second recentres */
+	if ((left & (HALO_XR_HAND_VIEW | HALO_XR_HAND_EAST)))
+	{
+		vr.view_held += seconds;
+		if (vr.view_held >= 1.0 && !vr.view_recentred)
+		{
+			host_xr_recenter();
+			vr.heading_valid = 0;
+			vr.view_recentred = 1;
+			host_xr_haptic(0, 0.6f, 0.08f);
+			host_xr_haptic(1, 0.6f, 0.08f);
+		}
+	}
+	else
+	{
+		if (vr.view_held > 0.0 && !vr.view_recentred)
+			vr.back_pulse = 2;
+		vr.view_held = 0.0;
+		vr.view_recentred = 0;
+	}
+	if (vr.back_pulse > 0)
+	{
+		buttons |= HALO_XR_BUTTON_BACK;
+		vr.back_pulse--;
+	}
+	vr.pad_buttons = buttons;
+	/* the grenade on the weapon hand's bumper, fire on its trigger */
+	vr.pad_trigger[0] = (vr.frame.hand_buttons[vr.weapon_hand] & HALO_XR_HAND_BUMPER) ? 1.0f : 0.0f;
+	vr.pad_trigger[1] = vr.frame.trigger[vr.weapon_hand];
+}
+
+/* ---------- gestures (after the PC mod HaloCEVR's designs, by LivingFray) */
+
+static float distance3(const float a[3], const float b[3])
+{
+	float d0 = a[0] - b[0], d1 = a[1] - b[1], d2 = a[2] - b[2];
+
+	return sqrtf(d0 * d0 + d1 * d1 + d2 * d2);
+}
+
+/* a point in the frame of the head's heading (LOCAL; x right, y up, z back
+of where the head faces, level) */
+static void heading_point(const float offset[3], float out[3])
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	float forward[3], yaw, c, s;
+
+	rotate(vr.frame.head.orientation, xr_forward, forward);
+	yaw = atan2f(-forward[0], -forward[2]);
+	c = cosf(yaw);
+	s = sinf(yaw);
+	out[0] = vr.frame.head.position[0] + offset[0] * c + offset[2] * s;
+	out[1] = vr.frame.head.position[1] + offset[1];
+	out[2] = vr.frame.head.position[2] - offset[0] * s + offset[2] * c;
+}
+
+static void update_gestures(void)
+{
+	static const float melee_rearm_seconds = 0.4f;
+	float seconds = (float)(vr.frame.predicted_display_period * 1e-9);
+	int w = vr.weapon_hand, o = 1 - vr.weapon_hand, hand;
+	int both_tracked = (vr.frame.hand_valid[0] & 1) && (vr.frame.hand_valid[1] & 1);
+	float hands_apart = both_tracked ? distance3(vr.frame.grip[0].position, vr.frame.grip[1].position) : 99.0f;
+
+	if (!(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+		return;
+	/* grips: held over 0.8, let go under 0.7 */
+	for (hand = 0; hand < 2; hand++)
+	{
+		int held = vr.grip_held[hand] ? vr.frame.squeeze[hand] > 0.7f : vr.frame.squeeze[hand] > 0.8f;
+
+		vr.grip_pressed[hand] = held && !vr.grip_held[hand];
+		vr.grip_held[hand] = held;
+	}
+
+	/* melee: a hand swung up or down faster than vr.melee_speed */
+	if (vr.melee_rearm > 0.0f)
+		vr.melee_rearm -= seconds;
+	if (vr.melee_speed > 0.0f && vr.hands_last_valid && !(vr.frame.flags & HALO_XR_FRAME_RECENTRED) && seconds > 0.0f)
+	{
+		for (hand = 0; hand < 2; hand++)
+		{
+			float vertical;
+
+			if (!(vr.frame.hand_valid[hand] & 1) || !(vr.hands_last_valid & (1 << hand)))
+				continue;
+			vertical = (vr.frame.grip[hand].position[1] - vr.hands_last[hand][1]) / seconds;
+			if (fabsf(vertical) > vr.melee_speed && vr.melee_rearm <= 0.0f)
+			{
+				vr.actions |= VR_ACTION_MELEE;
+				vr.melee_rearm = melee_rearm_seconds;
+				host_xr_haptic((unsigned int)hand, 0.5f, 0.05f);
+			}
+		}
+	}
+	vr.hands_last_valid = 0;
+	for (hand = 0; hand < 2; hand++)
+	{
+		if (vr.frame.hand_valid[hand] & 1)
+		{
+			memcpy(vr.hands_last[hand], vr.frame.grip[hand].position, sizeof(vr.hands_last[hand]));
+			vr.hands_last_valid |= 1 << hand;
+		}
+	}
+
+	/* the flashlight: the off hand brought to the head (a point 10 cm
+	behind the eyes, the head's middle), once each time */
+	if (vr.flashlight_distance > 0.0f && (vr.frame.hand_valid[o] & 1))
+	{
+		static const float behind[3] = { 0.0f, 0.0f, 0.10f };
+		float head_middle[3], distance;
+
+		rotate(vr.frame.head.orientation, behind, head_middle);
+		head_middle[0] += vr.frame.head.position[0];
+		head_middle[1] += vr.frame.head.position[1];
+		head_middle[2] += vr.frame.head.position[2];
+		distance = distance3(vr.frame.grip[o].position, head_middle);
+		if (distance < vr.flashlight_distance && vr.flashlight_armed)
+		{
+			vr.actions |= VR_ACTION_FLASHLIGHT;
+			vr.flashlight_armed = 0;
+			host_xr_haptic((unsigned int)o, 0.4f, 0.04f);
+		}
+		else if (distance > vr.flashlight_distance + 0.05f)
+		{
+			vr.flashlight_armed = 1;
+		}
+	}
+
+	/* crouching: the head lower than standing (its height at the last
+	recentre) by vr.crouch_height, until it comes back within 5 cm of it */
+	if (vr.crouch_height > 0.0f)
+	{
+		float drop = -vr.frame.head.position[1];
+
+		if (drop > vr.crouch_height)
+			vr.crouching = 1;
+		else if (drop < vr.crouch_height - 0.05f)
+			vr.crouching = 0;
+	}
+	else
+	{
+		vr.crouching = 0;
+	}
+
+	/* holsters at the shoulders, in the frame of the head's heading: the
+	weapon hand there, its grip switches weapons */
+	if (vr.holsters && (vr.frame.hand_valid[w] & 1))
+	{
+		static const float holster_reach = 0.3f;
+		float left_holster[3], right_holster[3];
+		const float left_offset[3] = { -0.25f, -0.25f, 0.15f }, right_offset[3] = { 0.25f, -0.25f, 0.15f };
+		int in;
+
+		heading_point(left_offset, left_holster);
+		heading_point(right_offset, right_holster);
+		in = distance3(vr.frame.grip[w].position, left_holster) < holster_reach ||
+			distance3(vr.frame.grip[w].position, right_holster) < holster_reach;
+		if (in && !vr.in_holster)
+			host_xr_haptic((unsigned int)w, 0.25f, 0.03f);
+		vr.in_holster = in;
+		if (in && vr.grip_pressed[w])
+		{
+			vr.actions |= VR_ACTION_SWITCH_WEAPON;
+			host_xr_haptic((unsigned int)w, 0.6f, 0.06f);
+		}
+	}
+	else
+	{
+		vr.in_holster = 0;
+	}
+
+	/* the off hand's grip: with the palms together, the weapon changes
+	hands; otherwise, within reach of the gun, it holds it in both */
+	if (vr.grip_pressed[o] && both_tracked)
+	{
+		if (hands_apart < 0.2f && !vr.grip_held[w])
+		{
+			vr.weapon_hand = o;
+			vr.two_hand_held = 0;
+			host_xr_haptic(0, 0.5f, 0.06f);
+			host_xr_haptic(1, 0.5f, 0.06f);
+			platform_log("vr: the weapon changes to the %s hand", vr.weapon_hand ? "right" : "left");
+			return;
+		}
+		if (vr.two_handed_mode == 1 && hands_apart < 0.8f)
+			vr.two_hand_held = 1;
+	}
+	if (!vr.grip_held[o])
+		vr.two_hand_held = 0;
+}
+
+unsigned int vr_take_actions(void)
+{
+	unsigned int actions = vr.actions;
+
+	vr.actions = 0;
+	if (vr.crouching)
+		actions |= VR_ACTION_CROUCH;
+	return actions;
+}
+
+int vr_weapon_hand(void)
+{
+	return vr.weapon_hand;
+}
+
+/* the direction the left stick moves the player in (vr.move_relative), as
+a yaw at heading 0: the head's, or a hand's turned in by 20 degrees as
+controllers are held */
+static float move_yaw(void)
+{
+	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+	int hand = vr.move_relative - 1;
+	float local[3], forward[3];
+
+	if (hand < 0 || !(vr.frame.hand_valid[hand] & 2))
+		return vr.head_yaw;
+	rotate(vr.frame.aim[hand].orientation, xr_forward, local);
+	to_halo(local, 1.0f, 0.0f, forward);
+	return atan2f(forward[1], forward[0]) + (hand ? 0.349f : -0.349f);
+}
+
 int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 {
 	if (!vr.active || !(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
 		return 0;
-	*buttons = vr.frame.buttons;
-	memcpy(trigger, vr.frame.trigger, sizeof(vr.frame.trigger));
+	*buttons = vr.pad_buttons;
+	memcpy(trigger, vr.pad_trigger, sizeof(vr.pad_trigger));
 	memcpy(thumb, vr.frame.thumb, sizeof(vr.frame.thumb));
 	if (vr.aiming_last_frame)
 	{
@@ -222,12 +526,12 @@ int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4])
 			*buttons &= ~(HALO_XR_BUTTON_LEFT_THUMB | HALO_XR_BUTTON_RIGHT_THUMB);
 		}
 	}
-	if (vr.hand_aiming_last_frame)
+	if (vr.aiming_last_frame && !vr.seated)
 	{
 		/* the game moves the player relative to the aim; the stick means
-		relative to the head: turn it by the head's yaw from the aim's
-		(x right, y forward; a turn to the left is positive) */
-		float angle = wrap_angle(vr.head_yaw - vr.aim_yaw);
+		relative to the head (or a hand, vr.move_relative): turn it by that
+		yaw from the aim's (x right, y forward; a turn left is positive) */
+		float angle = wrap_angle(move_yaw() - vr.aim_yaw);
 		float c = cosf(angle), s = sinf(angle);
 		float x = thumb[0], y = thumb[1];
 
@@ -256,6 +560,8 @@ static int frame_begin(void)
 		return 0;
 	}
 	vr.frame_begun = 1;
+	layout_controls();
+	update_gestures();
 	vr.frame_start = now_ms();
 	vr.wait_ms += vr.frame_start - start;
 	return 1;
@@ -326,8 +632,6 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 
 /* ---------- stereo */
 
-static void rotate(const float q[4], const float v[3], float out[3]);
-
 /* vr.force_render: a head 1.6 m up looking ahead (turned by vr.diag_yaw),
 for runs with the headset off (in standby the runtime shows nothing and
 tracks nothing) */
@@ -360,8 +664,8 @@ static void synthesize_views(void)
 
 			rotate(yaw, offset, vr.frame.grip[hand].position);
 			memcpy(vr.frame.aim[hand].position, vr.frame.grip[hand].position, sizeof(offset));
-			memcpy(vr.frame.grip[hand].orientation, hand ? turned : yaw, sizeof(yaw));
-			memcpy(vr.frame.aim[hand].orientation, hand ? turned : yaw, sizeof(yaw));
+			memcpy(vr.frame.grip[hand].orientation, hand == vr.weapon_hand ? turned : yaw, sizeof(yaw));
+			memcpy(vr.frame.aim[hand].orientation, hand == vr.weapon_hand ? turned : yaw, sizeof(yaw));
 			vr.frame.hand_valid[hand] = 3;
 		}
 		if (vr.diag_two_handed)
@@ -617,16 +921,25 @@ static void update_aim_pose(void)
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
 	float aim[3], between[3], length, up[3];
 
-	vr.aim_pose = vr.frame.aim[1];
+	int w = vr.weapon_hand, o = 1 - vr.weapon_hand;
+
+	vr.aim_pose = vr.frame.aim[w];
 	vr.two_handed = 0;
-	if (!vr.two_handed_enabled || (vr.frame.hand_valid[1] & 3) != 3 || !(vr.frame.hand_valid[0] & 1))
+	if (!vr.two_handed_enabled || (vr.frame.hand_valid[w] & 3) != 3 || !(vr.frame.hand_valid[o] & 1))
 		return;
-	rotate(vr.frame.aim[1].orientation, xr_forward, aim);
-	between[0] = vr.frame.grip[0].position[0] - vr.frame.grip[1].position[0];
-	between[1] = vr.frame.grip[0].position[1] - vr.frame.grip[1].position[1];
-	between[2] = vr.frame.grip[0].position[2] - vr.frame.grip[1].position[2];
+	rotate(vr.frame.aim[w].orientation, xr_forward, aim);
+	between[0] = vr.frame.grip[o].position[0] - vr.frame.grip[w].position[0];
+	between[1] = vr.frame.grip[o].position[1] - vr.frame.grip[w].position[1];
+	between[2] = vr.frame.grip[o].position[2] - vr.frame.grip[w].position[2];
 	length = sqrtf(between[0] * between[0] + between[1] * between[1] + between[2] * between[2]);
-	if (length < 0.12f || length > 0.60f ||
+	if (vr.two_handed_mode == 1)
+	{
+		/* gripped: the off hand holds the gun wherever it is, up to an arm's
+		reach apart */
+		if (!vr.two_hand_held || length < 0.05f)
+			return;
+	}
+	else if (length < 0.12f || length > 0.60f ||
 		(between[0] * aim[0] + between[1] * aim[1] + between[2] * aim[2]) / length < 0.82f)
 	{
 		return;
@@ -634,7 +947,7 @@ static void update_aim_pose(void)
 	between[0] /= length;
 	between[1] /= length;
 	between[2] /= length;
-	rotate(vr.frame.aim[1].orientation, xr_up, up);
+	rotate(vr.frame.aim[w].orientation, xr_up, up);
 	look_rotation(between, up, vr.aim_pose.orientation);
 	vr.two_handed = 1;
 }
@@ -645,7 +958,7 @@ static int hand_forward(float out[3])
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
 	float local[3];
 
-	if (!(vr.frame.hand_valid[1] & 2))
+	if (!(vr.frame.hand_valid[vr.weapon_hand] & 2))
 		return 0;
 	rotate(vr.aim_pose.orientation, xr_forward, local);
 	to_halo(local, 1.0f, 0.0f, out);
@@ -790,7 +1103,7 @@ int vr_hand_ray(const float position[3], float out_origin[3], float out_directio
 {
 	float up[3];
 
-	if (!vr_hand_aiming() || !(vr.frame.hand_valid[1] & 2))
+	if (!vr_hand_aiming() || !(vr.frame.hand_valid[vr.weapon_hand] & 2))
 		return 0;
 	return hand_view(&vr.aim_pose, NULL, position, out_origin, out_direction, up);
 }
@@ -800,14 +1113,16 @@ int vr_weapon_view(const float position[3], float out_position[3], float out_for
 	struct halo_xr_pose pose;
 	float extra[3];
 
-	if (!vr_hand_aiming() || (vr.frame.hand_valid[1] & 3) != 3)
+	if (!vr_hand_aiming() || (vr.frame.hand_valid[vr.weapon_hand] & 3) != 3)
 		return 0;
 	/* the grip's place, turned as the aim is, moved to where the game's
 	camera would be for the weapon's model to sit in the hand
-	(OpenXR's x right, y up, z back) */
+	(OpenXR's x right, y up, z back). In the left hand the model is
+	mirrored about that camera (vr_render.c), so the grip's sideways
+	offset is taken the other way to land in the hand */
 	pose = vr.aim_pose;
-	memcpy(pose.position, vr.frame.grip[1].position, sizeof(pose.position));
-	extra[0] = -vr.weapon_offset[0];
+	memcpy(pose.position, vr.frame.grip[vr.weapon_hand].position, sizeof(pose.position));
+	extra[0] = vr.weapon_hand ? -vr.weapon_offset[0] : vr.weapon_offset[0];
 	extra[1] = -vr.weapon_offset[1];
 	extra[2] = -vr.weapon_offset[2];
 	return hand_view(&pose, extra, position, out_position, out_forward, out_up);
@@ -1175,7 +1490,7 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			layers.quad_size[0] = vr.hud_width;
 			layers.quad_size[1] = vr.hud_width * 0.75f;
 		}
-		if (vr.hand_aiming && vr.reticle_distance > 0.0f && (vr.frame.hand_valid[1] & 2))
+		if (vr.hand_aiming && vr.reticle_distance > 0.0f && (vr.frame.hand_valid[vr.weapon_hand] & 2))
 		{
 			static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
 			float direction[3];

@@ -67,6 +67,17 @@ int vr_render_first_person_vehicles(void);
 /* the first-person weapon is not shown: seen from a driver's or gunner's
 seat */
 int vr_render_hide_first_person_weapon(void);
+/* handle_one_player_input: what the headset's gestures ask of the first
+local player this frame (VR_RENDER_ACTION_*; vr.h's VR_ACTION_*) */
+#define VR_RENDER_ACTION_MELEE 0x1u
+#define VR_RENDER_ACTION_FLASHLIGHT 0x2u
+#define VR_RENDER_ACTION_CROUCH 0x4u
+#define VR_RENDER_ACTION_SWITCH_WEAPON 0x8u
+unsigned long vr_render_actions(short local_player_index);
+/* the first-person weapon is drawn mirrored (held in the left hand):
+first_person_weapons.c brackets its drawing with halo_vr_mirror_winding */
+int vr_render_first_person_mirrored(void);
+void halo_vr_mirror_winding(int mirrored);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
 /* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */

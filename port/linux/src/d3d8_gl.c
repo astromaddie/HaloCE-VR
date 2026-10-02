@@ -80,6 +80,10 @@ frames, after one is presented (halo_screen_commit). */
 render target the size of the screen has per unit of it */
 static long screen_width;
 static float screen_scale[2] = { 1.0f, 1.0f };
+#ifdef HALO_VR
+/* model triangles' winding turned over while set (halo_vr_mirror_winding) */
+static int vr_mirror_winding;
+#endif
 static long ui_offset;
 #define UI_OFFSET ((GLint)ui_offset)
 
@@ -2473,6 +2477,12 @@ static void apply_raster_state(BOOL has_depth)
 #endif
 		GLenum cull_mode = rs[D3DRS_CULLMODE] == rs[D3DRS_FRONTFACE] ? GL_FRONT : GL_BACK;
 
+#ifdef HALO_VR
+		/* a mirrored model (the left hand's first-person weapon) turns its
+		triangles' winding over */
+		if (vr_mirror_winding)
+			front_face = front_face == GL_CW ? GL_CCW : GL_CW;
+#endif
 		if (gl_state.front_face != front_face)
 		{
 			gl_state.front_face = front_face;
@@ -3854,6 +3864,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 }
 
 #ifdef HALO_VR
+void halo_vr_mirror_winding(int mirrored)
+{
+	vr_mirror_winding = mirrored;
+}
+
 /* ---------- the headset's stereo frames (port/linux/include/halo_vr.h) */
 
 void halo_vr_resolve_eye(int eye)

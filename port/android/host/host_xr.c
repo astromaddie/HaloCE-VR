@@ -67,6 +67,15 @@ enum
 	_action_grip_pose,
 	_action_aim_pose,
 	_action_haptic,
+	/* each hand's buttons as they are (hand_buttons) */
+	_action_hand_south,
+	_action_hand_east,
+	_action_hand_west,
+	_action_hand_north,
+	_action_hand_bumper,
+	_action_hand_stick,
+	_action_hand_menu,
+	_action_hand_view,
 	NUMBER_OF_ACTIONS
 };
 
@@ -309,6 +318,16 @@ static int create_actions(void)
 		{ _action_dpad_left, "/user/hand/left/input/dpad_left/click" },
 		{ _action_dpad_right, "/user/hand/left/input/dpad_right/click" },
 		POSES("left"), POSES("right"),
+		{ _action_hand_south, "/user/hand/right/input/a/click" },
+		{ _action_hand_east, "/user/hand/right/input/b/click" },
+		{ _action_hand_west, "/user/hand/right/input/x/click" },
+		{ _action_hand_north, "/user/hand/right/input/y/click" },
+		{ _action_hand_bumper, "/user/hand/left/input/bumper/click" },
+		{ _action_hand_bumper, "/user/hand/right/input/bumper/click" },
+		{ _action_hand_stick, "/user/hand/left/input/thumbstick/click" },
+		{ _action_hand_stick, "/user/hand/right/input/thumbstick/click" },
+		{ _action_hand_menu, "/user/hand/right/input/menu/click" },
+		{ _action_hand_view, "/user/hand/left/input/view/click" },
 	};
 	/* Touch: X/Y on the left, A/B on the right */
 	static const struct binding touch[] =
@@ -327,6 +346,13 @@ static int create_actions(void)
 		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
 		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		POSES("left"), POSES("right"),
+		{ _action_hand_south, "/user/hand/right/input/a/click" },
+		{ _action_hand_south, "/user/hand/left/input/x/click" },
+		{ _action_hand_east, "/user/hand/right/input/b/click" },
+		{ _action_hand_east, "/user/hand/left/input/y/click" },
+		{ _action_hand_stick, "/user/hand/left/input/thumbstick/click" },
+		{ _action_hand_stick, "/user/hand/right/input/thumbstick/click" },
+		{ _action_hand_menu, "/user/hand/left/input/menu/click" },
 	};
 	static const struct binding index_controller[] =
 	{
@@ -344,6 +370,13 @@ static int create_actions(void)
 		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
 		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		POSES("left"), POSES("right"),
+		{ _action_hand_south, "/user/hand/right/input/a/click" },
+		{ _action_hand_south, "/user/hand/left/input/a/click" },
+		{ _action_hand_east, "/user/hand/right/input/b/click" },
+		{ _action_hand_east, "/user/hand/left/input/b/click" },
+		{ _action_hand_stick, "/user/hand/left/input/thumbstick/click" },
+		{ _action_hand_stick, "/user/hand/right/input/thumbstick/click" },
+		{ _action_hand_menu, "/user/hand/left/input/system/click" },
 	};
 	XrActionSetCreateInfo set_info = { XR_TYPE_ACTION_SET_CREATE_INFO };
 	XrSessionActionSetsAttachInfo attach = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
@@ -378,6 +411,14 @@ static int create_actions(void)
 	ok &= create_action(_action_grip_pose, XR_ACTION_TYPE_POSE_INPUT, "grip_pose", "Hand", 1);
 	ok &= create_action(_action_aim_pose, XR_ACTION_TYPE_POSE_INPUT, "aim_pose", "Aim", 1);
 	ok &= create_action(_action_haptic, XR_ACTION_TYPE_VIBRATION_OUTPUT, "haptic", "Vibration", 1);
+	ok &= create_action(_action_hand_south, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_south", "Lower face button", 1);
+	ok &= create_action(_action_hand_east, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_east", "Upper face button", 1);
+	ok &= create_action(_action_hand_west, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_west", "Left face button", 1);
+	ok &= create_action(_action_hand_north, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_north", "Top face button", 1);
+	ok &= create_action(_action_hand_bumper, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_bumper", "Bumper", 1);
+	ok &= create_action(_action_hand_stick, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_stick", "Stick click", 1);
+	ok &= create_action(_action_hand_menu, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_menu", "Menu", 1);
+	ok &= create_action(_action_hand_view, XR_ACTION_TYPE_BOOLEAN_INPUT, "hand_view", "View", 1);
 	if (!ok)
 		return 0;
 	if (xr.frame_controller)
@@ -409,6 +450,17 @@ static int action_boolean(int action)
 	XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN };
 
 	info.action = xr.actions[action];
+	return XR_SUCCEEDED(xrGetActionStateBoolean(xr.session, &info, &state)) && state.isActive && state.currentState;
+}
+
+/* a per-hand action's state for one hand (0 left, 1 right) */
+static int action_boolean_hand(int action, int hand)
+{
+	XrActionStateGetInfo info = { XR_TYPE_ACTION_STATE_GET_INFO };
+	XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN };
+
+	info.action = xr.actions[action];
+	info.subactionPath = xr.hands[hand];
 	return XR_SUCCEEDED(xrGetActionStateBoolean(xr.session, &info, &state)) && state.isActive && state.currentState;
 }
 
@@ -478,6 +530,34 @@ static void sync_input(struct halo_xr_frame *frame)
 	frame->squeeze[1] = action_float(_action_squeeze_right);
 	action_vector(_action_move, &frame->thumb[0], &frame->thumb[1]);
 	action_vector(_action_look, &frame->thumb[2], &frame->thumb[3]);
+	{
+		static const struct { int action; uint32_t bit; } hand_buttons[] =
+		{
+			{ _action_hand_south, HALO_XR_HAND_SOUTH },
+			{ _action_hand_east, HALO_XR_HAND_EAST },
+			{ _action_hand_west, HALO_XR_HAND_WEST },
+			{ _action_hand_north, HALO_XR_HAND_NORTH },
+			{ _action_hand_bumper, HALO_XR_HAND_BUMPER },
+			{ _action_hand_stick, HALO_XR_HAND_STICK },
+			{ _action_hand_menu, HALO_XR_HAND_MENU },
+			{ _action_hand_view, HALO_XR_HAND_VIEW },
+		};
+		int side;
+
+		for (side = 0; side < 2; side++)
+		{
+			for (index = 0; index < sizeof(hand_buttons) / sizeof(hand_buttons[0]); index++)
+			{
+				if (action_boolean_hand(hand_buttons[index].action, side))
+					frame->hand_buttons[side] |= hand_buttons[index].bit;
+			}
+		}
+		/* the Frame's d-pad is on its left controller */
+		if (action_boolean(_action_dpad_up)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_UP;
+		if (action_boolean(_action_dpad_down)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_DOWN;
+		if (action_boolean(_action_dpad_left)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_LEFT;
+		if (action_boolean(_action_dpad_right)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_RIGHT;
+	}
 	for (hand = 0; hand < 2; hand++)
 	{
 		XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };

@@ -45,6 +45,9 @@ static struct
 	/* the game's camera this frame, the head posed from it */
 	struct render_camera head_camera;
 	real_point3d game_camera_position;
+	/* the camera the first-person weapon was posed from this frame */
+	struct render_camera weapon_camera;
+	boolean weapon_camera_valid;
 	/* the local player's seat (vr_update_seat): in a vehicle, its kind, and
 	the heading the view turns with (the vehicle's, plus the seat's own turn
 	from it) */
@@ -428,12 +431,15 @@ void vr_render_weapon_camera(
 	real_vector3d forward, up;
 
 	/* in the hand when it aims, else with the head */
+	vr_render.weapon_camera_valid = FALSE;
 	if (vr_render.stereo &&
 		vr_weapon_view(vr_render.game_camera_position.n, position.n, forward.n, up.n))
 	{
 		camera->position = position;
 		camera->forward = forward;
 		camera->up = up;
+		vr_render.weapon_camera = *camera;
+		vr_render.weapon_camera_valid = TRUE;
 	}
 	else if (vr_render.stereo)
 	{
@@ -501,6 +507,20 @@ void vr_player_control_facing(
 			}
 		}
 	}
+}
+
+unsigned long vr_render_actions(
+	short local_player_index)
+{
+	if (local_player_index != local_player_get_next(NONE) || !vr_active())
+		return 0;
+	return vr_take_actions();
+}
+
+int vr_render_first_person_mirrored(
+	void)
+{
+	return vr_render.stereo && vr_hand_aiming() && vr_weapon_hand() == 0;
 }
 
 int vr_render_first_person_vehicles(
@@ -805,7 +825,7 @@ void vr_render_first_person_ik(
 		if (arms == 3)
 			arms = 0;
 	}
-	if (!vr_render.stereo || !vr_hand_aiming() || arms == 2 || !graph)
+	if (!vr_render.stereo || !vr_hand_aiming() || !graph)
 		return;
 	for (side = 0; side < 2; side++)
 	{
@@ -843,6 +863,43 @@ void vr_render_first_person_ik(
 		}
 	}
 
+	/* in the left hand: the whole model mirrored across the weapon
+	camera's upright plane (its left axis the plane's normal), the grip
+	then landing in the hand (vr_weapon_view takes the offset the other
+	way); its triangles' winding turns over (halo_vr_mirror_winding) */
+	if (vr_render_first_person_mirrored() && vr_render.weapon_camera_valid)
+	{
+		real_vector3d normal;
+		real_point3d centre = vr_render.weapon_camera.position;
+		short index;
+
+		cross_product3d(&vr_render.weapon_camera.up, &vr_render.weapon_camera.forward, &normal);
+		normalize3d(&normal);
+		for (index = 0; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+		{
+			real_matrix4x3 *m = &matrices[index];
+			real_vector3d *axes[3] = { &m->forward, &m->left, &m->up };
+			real_vector3d offset;
+			real along;
+			int axis;
+
+			vr_point_minus(&m->position, &centre, &offset);
+			along = 2.0f * (offset.i * normal.i + offset.j * normal.j + offset.k * normal.k);
+			m->position.x -= normal.i * along;
+			m->position.y -= normal.j * along;
+			m->position.z -= normal.k * along;
+			for (axis = 0; axis < 3; axis++)
+			{
+				along = 2.0f * (axes[axis]->i * normal.i + axes[axis]->j * normal.j + axes[axis]->k * normal.k);
+				axes[axis]->i -= normal.i * along;
+				axes[axis]->j -= normal.j * along;
+				axes[axis]->k -= normal.k * along;
+			}
+		}
+	}
+
+	if (arms == 2)
+		return;
 	if (arms == 1)
 	{
 		short gun = vr_find_node(graph, "frame", "gun");
@@ -888,10 +945,17 @@ void vr_render_first_person_ik(
 		right_side.i = forward.j;
 		right_side.j = -forward.i;
 		right_side.k = 0.0f;
+		/* the model's right arm holds the gun; in the left hand the model is
+		mirrored, so that arm is the left one and the other reaches the right
+		controller */
+		int weapon_hand = vr_weapon_hand();
+
 		for (side = 0; side < 2; side++)
 		{
 			short *chain = side ? right : left;
-			real outward = side ? 1.0f : -1.0f;
+			boolean gun_arm = side == 1;
+			real outward = (gun_arm == (weapon_hand == 1)) ? 1.0f : -1.0f;
+			int controller = gun_arm ? weapon_hand : 1 - weapon_hand;
 
 			/* shoulders below and either side of the eyes, a little back */
 			shoulder.x = head.x + (right_side.i * 0.17f * outward - forward.i * 0.06f) * units;
@@ -902,21 +966,21 @@ void vr_render_first_person_ik(
 			pole.j = right_side.j * 0.6f * outward - forward.j * 0.3f;
 			pole.k = -1.0f;
 			target = matrices[chain[_vr_arm_hand]].position;
-			if (!side)
+			if (!gun_arm)
 			{
-				/* the left hand on the left controller, unless it is near the
+				/* the other hand on its controller, unless it is near the
 				gun's grip for it */
 				real_point3d hand;
 				real_vector3d hand_forward, hand_up, gap;
 
-				if (vr_hand_world(0, vr_render.game_camera_position.n, hand.n, hand_forward.n, hand_up.n))
+				if (vr_hand_world(controller, vr_render.game_camera_position.n, hand.n, hand_forward.n, hand_up.n))
 				{
 					vr_point_minus(&hand, &target, &gap);
 					if (vr_length(&gap) > 0.15f * units)
 						target = hand;
 				}
 			}
-			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, side == 1);
+			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, gun_arm);
 		}
 	}
 }

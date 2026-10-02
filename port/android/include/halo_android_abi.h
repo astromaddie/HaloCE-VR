@@ -138,7 +138,25 @@ struct halo_xr_frame
 	float trigger[2];            /* 0..1 */
 	float thumb[4];              /* left x, y, right x, y: -1..1 */
 	float squeeze[2];
+	uint32_t hand_buttons[2];    /* HALO_XR_HAND_*, each hand's own (0 left, 1 right) */
 };
+
+/* hand_buttons: each controller's buttons as they are, for layouts that do
+not follow the Xbox pad (vr.controls). Face buttons by place: south the
+lower (Frame/Index/Touch right A, Touch left X), east the upper (B, Touch
+left Y), west and north the Frame's right X and Y. */
+#define HALO_XR_HAND_SOUTH 0x0001u
+#define HALO_XR_HAND_EAST 0x0002u
+#define HALO_XR_HAND_WEST 0x0004u
+#define HALO_XR_HAND_NORTH 0x0008u
+#define HALO_XR_HAND_BUMPER 0x0010u
+#define HALO_XR_HAND_STICK 0x0020u         /* the stick pressed in */
+#define HALO_XR_HAND_MENU 0x0040u
+#define HALO_XR_HAND_VIEW 0x0080u
+#define HALO_XR_HAND_DPAD_UP 0x0100u
+#define HALO_XR_HAND_DPAD_DOWN 0x0200u
+#define HALO_XR_HAND_DPAD_LEFT 0x0400u
+#define HALO_XR_HAND_DPAD_RIGHT 0x0800u
 
 /* layer flags for host_xr_end_frame */
 #define HALO_XR_LAYER_PROJECTION 0x1u     /* both eye swapchains, as posed this frame */
@@ -166,7 +184,7 @@ struct halo_xr_layers
 #endif
 HALO_XR_ASSERT(sizeof(struct halo_xr_pose) == 28, "halo_xr_pose layout");
 HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 288, "halo_xr_info layout");
-HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 296, "halo_xr_frame layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 304, "halo_xr_frame layout");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, head) == 24, "halo_xr_frame.head");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, buttons) == 260, "halo_xr_frame.buttons");
 HALO_XR_ASSERT(sizeof(struct halo_xr_layers) == 76, "halo_xr_layers layout");

@@ -102,6 +102,17 @@ camera is (`position`); 0 when it is not tracked */
 int vr_hand_world(int hand, const float position[3], float out_position[3], float out_forward[3], float out_up[3]);
 /* the game's world units per metre (vr.world_scale) */
 float vr_units_per_metre(void);
+/* ---------- gestures (vr_frame.c) */
+
+/* what the gestures ask of the game this frame, each taken once:
+VR_ACTION_* */
+#define VR_ACTION_MELEE 0x1u          /* a hand swung */
+#define VR_ACTION_FLASHLIGHT 0x2u     /* the off hand brought to the head */
+#define VR_ACTION_CROUCH 0x4u         /* the head lowered (held while it is) */
+#define VR_ACTION_SWITCH_WEAPON 0x8u  /* the grip at a shoulder holster */
+unsigned int vr_take_actions(void);
+/* the hand holding the weapon: 0 left, 1 right */
+int vr_weapon_hand(void);
 /* how far along the hand's ray the reticle shows this frame, in world units */
 void vr_set_reticle(float distance_units);
 

@@ -290,6 +290,15 @@ static const struct config_setting config_settings[] =
 		"How far ahead the cutscene screen floats, in metres." },
 	{ "vr.cinema_width", _config_real, "3.6", "HALO_VR_CINEMA_WIDTH", _environment_value, _platform_vr,
 		"The cutscene screen's width, in metres." },
+	{ "vr.controls", _config_string, "\"vr\"", "HALO_VR_CONTROLS", _environment_value, _platform_vr,
+		"The controllers' layout. \"vr\": right trigger fire, left trigger zoom, A\n"
+		"jump, B reload and action, X switch grenades, Y switch weapons, right\n"
+		"bumper grenade, left bumper flashlight, right stick click melee, left\n"
+		"stick click crouch, menu pause, view back (held a second, recentre).\n"
+		"\"pad\": as an Xbox controller." },
+	{ "vr.move_relative", _config_string, "\"head\"", "HALO_VR_MOVE_RELATIVE", _environment_value, _platform_vr,
+		"What the left stick moves you relative to: \"head\", or where the\n"
+		"\"left\" or \"right\" controller points." },
 	{ "vr.aim", _config_string, "\"hand\"", "HALO_VR_AIM", _environment_value, _platform_vr,
 		"What aims on foot: \"head\" (where you look, with a reticle ahead) or\n"
 		"\"hand\" (the right controller, holding the weapon). In vehicles the\n"
@@ -306,9 +315,24 @@ static const struct config_setting config_settings[] =
 		"shoulders to the hands (the left to the left controller, or to the gun\n"
 		"when held near it); \"hidden\" shows the gun alone; \"animated\" moves\n"
 		"them with the gun as the game animates them." },
-	{ "vr.two_handed", _config_boolean, "true", "HALO_VR_TWO_HANDED", _environment_value, _platform_vr,
-		"With vr.aim \"hand\": the left hand held on the gun, ahead of the right,\n"
-		"steadies it: the gun points from the right hand to the left." },
+	{ "vr.two_handed", _config_string, "\"grip\"", "HALO_VR_TWO_HANDED", _environment_value, _platform_vr,
+		"With vr.aim \"hand\": holding the gun in both hands steadies it, pointing\n"
+		"from the weapon hand to the other. \"grip\": the other hand's grip held\n"
+		"(within 80 cm); \"auto\": that hand held ahead along the gun; \"off\"." },
+	{ "vr.left_handed", _config_boolean, "false", "HALO_VR_LEFT_HANDED", _environment_value, _platform_vr,
+		"Hold the weapon in the left hand (fire, grenade and zoom swap triggers\n"
+		"and bumpers). Palms together and the other hand's grip also swaps." },
+	{ "vr.melee_speed", _config_real, "2.5", "HALO_VR_MELEE_SPEED", _environment_value, _platform_vr,
+		"A hand swung up or down faster than this (metres a second) melees; 0\n"
+		"turns the gesture off (the right stick click still melees)." },
+	{ "vr.flashlight_distance", _config_real, "0.2", "HALO_VR_FLASHLIGHT_DISTANCE", _environment_value, _platform_vr,
+		"The off hand brought this close (metres) to the middle of the head\n"
+		"turns the flashlight on or off; 0 turns the gesture off." },
+	{ "vr.crouch_height", _config_real, "0.15", "HALO_VR_CROUCH_HEIGHT", _environment_value, _platform_vr,
+		"Ducking this far (metres) below your height at the last recentre\n"
+		"crouches; 0 turns it off." },
+	{ "vr.holsters", _config_boolean, "true", "HALO_VR_HOLSTERS", _environment_value, _platform_vr,
+		"The weapon hand's grip at either shoulder switches weapons." },
 	{ "vr.weapon_offset_right", _config_real, "0.10", "HALO_VR_WEAPON_RIGHT", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": how far right of the game's eye the weapon's model\n"
 		"holds its grip, in metres, so the grip sits in the hand." },
