@@ -258,6 +258,16 @@ static const struct config_setting config_settings[] =
 		"How far ahead the flat screen (menus, cutscenes) floats, in metres." },
 	{ "vr.screen_width", _config_real, "2.4", "HALO_VR_SCREEN_WIDTH", _environment_value, _platform_vr,
 		"The flat screen's width, in metres (its height is three quarters)." },
+	{ "vr.stereo", _config_boolean, "true", "HALO_VR_STEREO", _environment_value, _platform_vr,
+		"Play in 3D around you; false keeps gameplay on the flat screen too." },
+	{ "vr.world_scale", _config_real, "0.328084", "HALO_VR_WORLD_SCALE", _environment_value, _platform_vr,
+		"Game units per metre of head movement and eye separation: the game's\n"
+		"unit is 10 feet (0.328084 per metre). Larger makes the world feel\n"
+		"smaller." },
+	{ "vr.hud_distance", _config_real, "1.5", "HALO_VR_HUD_DISTANCE", _environment_value, _platform_vr,
+		"How far ahead of the eyes the HUD floats, in metres." },
+	{ "vr.hud_width", _config_real, "1.4", "HALO_VR_HUD_WIDTH", _environment_value, _platform_vr,
+		"The HUD's width, in metres (its height is three quarters)." },
 	{ "vr.probe_seconds", _config_real, "0.0", "HALO_VR_PROBE", _environment_value, _platform_vr,
 		"Before the game starts, show dim test colours in each eye for this many\n"
 		"seconds and log the OpenXR frame rate; 0 skips it." },

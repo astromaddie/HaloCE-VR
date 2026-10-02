@@ -87,6 +87,7 @@ symbols in this file:
 #include "effects/weather_particle_systems.h"
 #include "main/main.h"
 #include "structures/structures.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -328,12 +329,40 @@ static void render_window(
 	structure_visibility_compute();
 	player_effect_get_screen_flash(local_player_index, &parameters.screen_flash);
 	rasterizer_window_begin(&parameters);
+#ifdef HALO_VR
+	/* the headset's HUD pass: the HUD alone, on a transparent ground */
+	if (VR_RENDER_HUD())
+	{
+		halo_vr_clear_transparent();
+		interface_draw_screen();
+		rasterizer_screen_flash();
+		halo_screen_ui_offset(TRUE);
+		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
+		halo_screen_ui_offset(FALSE);
+		rasterizer_window_end();
+		profile_render_window_end();
+		return;
+	}
+#endif
 
 	if (!bink_playback_in_progress())
 	{
 		build_sprite_prepare_for_window();
 		render_sky();
+#ifdef HALO_VR
+		/* posed once a frame, from the head between the eyes: per eye it
+		would sit at the same place in each and lose its depth */
+		if (!VR_RENDER_REPEAT())
+		{
+			struct render_camera eye_camera = render.camera;
+
+			vr_render_weapon_camera(&render.camera);
+			first_person_weapon_render_update();
+			render.camera = eye_camera;
+		}
+#else
 		first_person_weapon_render_update();
+#endif
 		lights_preprocess_scene();
 		render_objects();
 		structure_render_preprocess();
@@ -406,13 +435,20 @@ static void render_window(
 		structure_render_detail_objects();
 		rasterizer_transparent_geometry_draw(FALSE);
 		rasterizer_transparent_geometry_stop();
-		structure_render_fog_screen();
+		/* the fog's screen layers assume a symmetric frustum facing the
+		game's camera: not for the headset's eyes */
+		if (!VR_RENDER_EYE())
+			structure_render_fog_screen();
 		rasterizer_lens_flares_draw();
-		interface_draw_screen();
-		rasterizer_screen_flash();
-		halo_screen_ui_offset(TRUE);
-		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
-		halo_screen_ui_offset(FALSE);
+		/* the headset shows the HUD on a layer of its own */
+		if (!VR_RENDER_EYE())
+		{
+			interface_draw_screen();
+			rasterizer_screen_flash();
+			halo_screen_ui_offset(TRUE);
+			render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
+			halo_screen_ui_offset(FALSE);
+		}
 	}
 
 	bink_playback_render();
@@ -497,6 +533,10 @@ static void render_player_frame(
 			sizeof(rectangle2d)));
 
 	render_camera_build_frustum_bounds(camera, &frustum_bounds);
+#ifdef HALO_VR
+	/* an eye's own, off-centre field */
+	vr_render_frustum_bounds(&frustum_bounds);
+#endif
 
 	if (screenshot_combined_index != NULL)
 	{
@@ -618,9 +658,15 @@ void render_frame(
 					screenshot_page_index->y * global_screenshot_size + screenshot_index->y;
 			}
 
+#ifdef HALO_VR
+			vr_render_window_begin(window_index);
+#endif
 			render_player_frame(
 				window,
 				screenshot_index != NULL ? &screenshot_combined_index : NULL);
+#ifdef HALO_VR
+			vr_render_window_end(window_index);
+#endif
 			continue;
 		}
 		else

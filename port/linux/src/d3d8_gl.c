@@ -3725,6 +3725,27 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	pthread_mutex_unlock(&vertical_blank_lock);
 }
 
+#ifdef HALO_VR
+/* ---------- the headset's stereo frames (port/linux/include/halo_vr.h) */
+
+void halo_vr_resolve_eye(int eye)
+{
+	struct render_target_entry *back_buffer;
+
+	if (!device.gl_ready)
+		return;
+	back_buffer = render_target_get(&device.back_buffer);
+	vr_resolve_eye(eye, framebuffer_get(back_buffer->target.texture, 0), (int)back_buffer->target.gl_width,
+		(int)back_buffer->target.gl_height);
+	xgpu_gl_state_invalidate();
+}
+
+void halo_vr_clear_transparent(void)
+{
+	D3DDevice_Clear(0, NULL, D3DCLEAR_TARGET, 0x00000000, 1.0f, 0);
+}
+#endif
+
 HRESULT WINAPI D3DDevice_PersistDisplay(void)
 {
 	return S_OK;

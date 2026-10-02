@@ -388,6 +388,7 @@ symbols in this file:
 #include "text/draw_string.h"
 #include "text/font_group.h"
 #include "tag_files/files.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -3048,9 +3049,15 @@ static void main_game_render(
 
 	if (global_screenshot_count.count <= 0)
 	{
+		short render_window_count = (short)(player_window_count + 1);
+
+#ifdef HALO_VR
+		/* the headset's eyes and HUD in place of the one player window */
+		render_window_count = vr_render_windows(global_screenshot_count.windows, render_window_count);
+#endif
 		render_frame(
 			global_screenshot_count.windows,
-			player_window_count + 1,
+			render_window_count,
 			NULL,
 			NULL,
 			main_globals.movie,
