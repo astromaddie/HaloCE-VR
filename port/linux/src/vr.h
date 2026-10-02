@@ -17,6 +17,10 @@ off.
 int vr_active(void);
 /* sets up the session; called once the GL context is current */
 void vr_initialize(void);
+/* takes up the settings changed in play (the pause menu's VR settings),
+and counts the changes for those who keep settings (vr_settings_generation) */
+void vr_reload_settings(void);
+int vr_settings_generation(void);
 /* vr.probe_seconds: dim test colours in each eye before the game starts */
 void vr_probe(void);
 /* the pixels per unit of the game's 640x480 screen in the headset: its

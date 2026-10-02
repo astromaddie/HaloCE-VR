@@ -119,6 +119,8 @@ static struct
 	cannot walk (a vehicle, a cutscene), to be taken up again from where
 	the head is then */
 	int roomscale, room_held;
+	/* vr_reload_settings's count, for caches elsewhere */
+	int settings_generation;
 	float room_previous[2], room_now[2];
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
@@ -146,6 +148,53 @@ static double now_ms(void)
 int vr_active(void)
 {
 	return vr.active;
+}
+
+void vr_reload_settings(void)
+{
+	static int left_handed = -1;
+
+	vr.cinema_enabled = config_boolean("vr.cinema_3d");
+	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
+	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
+	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
+	vr.layout_vr = strcmp(config_string("vr.controls"), "pad") != 0;
+	vr.move_relative = !strcmp(config_string("vr.move_relative"), "left") ? 1 :
+		!strcmp(config_string("vr.move_relative"), "right") ? 2 : 0;
+	{
+		const char *mode = config_string("vr.two_handed");
+
+		/* "grip" (the off hand's grip on the gun), "auto" (the off hand held
+		ahead along the gun), "off"; an older boolean true means auto */
+		vr.two_handed_mode = !strcmp(mode, "off") || !strcmp(mode, "false") ? 0 :
+			!strcmp(mode, "auto") || !strcmp(mode, "true") ? 2 : 1;
+		vr.two_handed_enabled = vr.two_handed_mode != 0;
+	}
+	/* (the hand the gun is in changes with the setting, else it stays where
+	the palms last swapped it) */
+	if (left_handed != config_boolean("vr.left_handed"))
+	{
+		left_handed = config_boolean("vr.left_handed");
+		vr.weapon_hand = left_handed ? 0 : 1;
+	}
+	vr.melee_speed = (float)config_real("vr.melee_speed");
+	vr.flashlight_distance = (float)config_real("vr.flashlight_distance");
+	vr.crouch_height = (float)config_real("vr.crouch_height");
+	vr.holsters = config_boolean("vr.holsters");
+	vr.haptics = (float)config_real("vr.haptics");
+	vr.scope_enabled = config_boolean("vr.scope");
+	vr.scope_size = (float)config_real("vr.scope_size");
+	if (vr.roomscale != config_boolean("vr.roomscale"))
+	{
+		vr.roomscale = config_boolean("vr.roomscale");
+		vr.room_held = 1;
+	}
+	vr.settings_generation++;
+}
+
+int vr_settings_generation(void)
+{
+	return vr.settings_generation;
 }
 
 void vr_initialize(void)
@@ -180,37 +229,15 @@ void vr_initialize(void)
 	vr.hud_distance = (float)config_real("vr.hud_distance");
 	vr.hud_width = (float)config_real("vr.hud_width");
 	vr.stereo_enabled = config_boolean("vr.stereo");
-	vr.cinema_enabled = config_boolean("vr.cinema_3d");
 	vr.cinema_separation = (float)config_real("vr.cinema_separation");
 	vr.cinema_convergence = (float)config_real("vr.cinema_convergence");
 	vr.cinema_distance = (float)config_real("vr.cinema_distance");
 	vr.cinema_width = (float)config_real("vr.cinema_width");
 	vr.mode = -1;
 	vr.units_per_metre = (float)config_real("vr.world_scale");
-	vr.snap_turn = (float)config_real("vr.snap_turn") * 0.017453293f;
-	vr.smooth_turn_speed = (float)config_real("vr.smooth_turn_speed") * 0.017453293f;
 	vr.snap_armed = 1;
-	vr.hand_aim = !strcmp(config_string("vr.aim"), "hand");
-	vr.layout_vr = strcmp(config_string("vr.controls"), "pad") != 0;
-	vr.move_relative = !strcmp(config_string("vr.move_relative"), "left") ? 1 :
-		!strcmp(config_string("vr.move_relative"), "right") ? 2 : 0;
-	{
-		const char *mode = config_string("vr.two_handed");
-
-		/* "grip" (the off hand's grip on the gun), "auto" (the off hand held
-		ahead along the gun), "off"; an older boolean true means auto */
-		vr.two_handed_mode = !strcmp(mode, "off") || !strcmp(mode, "false") ? 0 :
-			!strcmp(mode, "auto") || !strcmp(mode, "true") ? 2 : 1;
-		vr.two_handed_enabled = vr.two_handed_mode != 0;
-	}
 	vr.weapon_hand = config_boolean("vr.left_handed") ? 0 : 1;
-	vr.melee_speed = (float)config_real("vr.melee_speed");
-	vr.flashlight_distance = (float)config_real("vr.flashlight_distance");
-	vr.crouch_height = (float)config_real("vr.crouch_height");
-	vr.holsters = config_boolean("vr.holsters");
-	vr.haptics = (float)config_real("vr.haptics");
-	vr.scope_enabled = config_boolean("vr.scope");
-	vr.scope_size = (float)config_real("vr.scope_size");
+	vr_reload_settings();
 	vr.zoom_level = -1;
 	vr.flashlight_armed = 1;
 	vr.weapon_offset[0] = (float)config_real("vr.weapon_offset_right");
@@ -222,7 +249,6 @@ void vr_initialize(void)
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
-	vr.roomscale = config_boolean("vr.roomscale");
 	vr.room_held = 1;
 	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
 	vr.dump_frame = config_integer("vr.dump_frame");

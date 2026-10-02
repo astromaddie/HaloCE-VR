@@ -92,20 +92,25 @@ enum
 static boolean vr_first_person_vehicles(
 	void)
 {
-	static int first_person = -1;
+	static int first_person = -1, generation = -1;
 
-	if (first_person < 0)
+	/* (read again when the pause menu changes it) */
+	if (first_person < 0 || generation != vr_settings_generation())
+	{
 		first_person = strcmp(config_string("vr.vehicle_view"), "chase") != 0;
+		generation = vr_settings_generation();
+	}
 	return first_person && vr_active();
 }
 
 static int vr_vehicle_steering(
 	void)
 {
-	static int steering = -1;
+	static int steering = -1, generation = -1;
 
-	if (steering < 0)
+	if (steering < 0 || generation != vr_settings_generation())
 	{
+		generation = vr_settings_generation();
 		char const *setting = config_string("vr.vehicle_steering");
 
 		steering = !strcmp(setting, "head") ? _vr_steering_head :

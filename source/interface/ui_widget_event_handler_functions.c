@@ -927,6 +927,9 @@ symbols in this file:
 #include "interface/ui_widget_definitions.h"
 #include "saved games/saved_game_files.h"
 #include "text/unicode.h"
+#ifdef HALO_VR
+#include "halo_vr.h"
+#endif
 
 /* ---------- constants */
 
@@ -3349,6 +3352,11 @@ boolean ui_widget_event_handler_function_invoke(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 478,
 		widget != NULL && widget_deleted != NULL,
 		"(widget != NULL) && (widget_deleted != NULL)");
+#ifdef HALO_VR
+	/* the pause menu's VR settings (port/linux/game/vr_menu.c) */
+	if (function_index == VR_MENU_NEXT_FUNCTION || function_index == VR_MENU_PREVIOUS_FUNCTION)
+		return vr_menu_setting_change(widget->definition_tag_index, function_index == VR_MENU_NEXT_FUNCTION ? 1 : -1);
+#endif
 	if ((short)function_index >= 0 && function_index < 102)
 	{
 		result = event_handler_function_list.functions[(short)function_index](widget, event, widget_deleted);

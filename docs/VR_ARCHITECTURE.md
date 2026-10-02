@@ -23,6 +23,7 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
 | Menu laser pointer | Built, **not yet run on the device.** |
 | Room-scale walking | Built (`vr.roomscale`, off by default), **not yet run on the device.** |
+| VR settings in the pause menu | Built, **not yet run on the device.** |
 | Comfort options, foveation | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -178,6 +179,23 @@ mirrored (`halo_vr_mirror_winding` flips the triangles' winding).
 **Weapon feel.** When zoomed, the aim is eased toward the hand's (`steady_aim`, after
 HaloCEVR's half-life formula), steadying the scope. Shots buzz the weapon hand by weapon (and the
 off hand when two-handed), scaled by `vr.haptics`.
+
+**VR settings in the pause menu** (`port/linux/game/vr_menu.c`). Halo's menus are widget
+tags in each map, so when a level's tags load the VR build adds its own, cloned from the solo
+pause menu's: same font, colours, buttons and boxes.
+- **The pause menu** gets a fifth item, VR SETTINGS. Its button hints (B back, A select) move
+  from under the list to under the mission objectives, making room.
+- **VR SETTINGS** is the pause menu's backdrop and boxes with nine settings in two columns:
+  controls (VR / Xbox), aim (hand / head), gun hand, turning (snap 30 / snap 45 / smooth),
+  room-scale, scope, vehicles (inside / chase), steering (stick / head / hand), cutscenes
+  (3D / flat).
+- **Changing a setting:** A or right steps it on, left steps it back, and B returns to the pause
+  menu. The laser pointer clicks them too.
+- **Saving:** each change is written into `config.toml` (`config_write_*`) and taken up at once
+  (`vr_reload_settings`).
+- **How the tags are added:** `cache_file_add_tag` puts tags made in memory after the map's own,
+  in a copy of its tag table. A button's text comes from code (game data input function 41), and
+  its changes run event handler functions 102 and 103, one past the end of each table.
 
 **Menus' laser pointer** (`vr_ui_pointer`, behind `halo_ui_pointer_update`). The weapon hand
 points at the screen the menus are on, as the desktop builds' mouse does: the flat screen, or

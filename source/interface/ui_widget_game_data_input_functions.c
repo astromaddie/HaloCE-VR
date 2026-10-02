@@ -354,6 +354,9 @@ symbols in this file:
 #include "saved games/playlist_profile.h"
 #include "text/text_group.h"
 #include "text/unicode.h"
+#ifdef HALO_VR
+#include "halo_vr.h"
+#endif
 
 /* ---------- constants */
 
@@ -690,6 +693,32 @@ void ui_widget_game_data_function_invoke(
 		0x10A,
 		widget);
 
+#ifdef HALO_VR
+	/* the pause menu's VR settings (port/linux/game/vr_menu.c): the text of
+	their buttons */
+	if (function == VR_MENU_GAME_DATA_FUNCTION)
+	{
+		wchar_t text[64];
+		long length;
+
+		if (widget->type == _ui_widget_type_text_box &&
+			vr_menu_setting_text(widget->definition_tag_index, text, NUMBEROF(text)))
+		{
+			length = ustrlen(text);
+			widget->parameters.text_box.text = ui_widget_realloc(
+				widget->parameters.text_box.text,
+				(word)(2 * length + 2),
+				"port/linux/game/vr_menu.c",
+				0);
+			if (widget->parameters.text_box.text)
+			{
+				ustrncpy(widget->parameters.text_box.text, text, length);
+				widget->parameters.text_box.text[length] = 0;
+			}
+		}
+		return;
+	}
+#endif
 	if ((short)function >= 0 && function < NUMBEROF(game_data_input_function_list))
 	{
 		game_data_input_function_list[(short)function](widget);

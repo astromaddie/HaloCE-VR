@@ -105,6 +105,18 @@ void vr_render_room_scale(long biped_index, union real_point3d *position, real h
 sensor turns with, the head's, not the hand's aim; 0 to leave the
 facing's */
 int vr_render_motion_sensor_yaw(short local_player_index, real *yaw);
+/* the pause menu's VR settings (port/linux/game/vr_menu.c): its widget tags
+made as a map's tags load (cache_files.c), and the widget code's calls for
+their text (a game data input function) and their changes (event handler
+functions, one past the end of each table) */
+#define VR_MENU_GAME_DATA_FUNCTION 41
+#define VR_MENU_NEXT_FUNCTION 102
+#define VR_MENU_PREVIOUS_FUNCTION 103
+void vr_menu_tags_loaded(void);
+/* the text of the widget with that definition, if it is one of the menu's */
+boolean vr_menu_setting_text(long definition_tag_index, wchar_t *text, long size);
+/* steps the widget's setting by `step` values, if it is one of the menu's */
+boolean vr_menu_setting_change(long definition_tag_index, long step);
 /* 1 while the head aims: no magnetism dragging the view */
 int vr_render_aiming(void);
 /* 1 while the right hand aims (vr.aim "hand"): no crosshair on the HUD */

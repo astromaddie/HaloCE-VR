@@ -811,6 +811,14 @@ long scenario_tags_load(
 
 				hud_hires_tags_loaded();
 			}
+#ifdef HALO_VR
+			/* port: the pause menu's VR settings (port/linux/game/vr_menu.c) */
+			{
+				extern void vr_menu_tags_loaded(void);
+
+				vr_menu_tags_loaded();
+			}
+#endif
 			result = cache_file_globals.tag_header->scenario_tag_index;
 		}
 	}
@@ -888,6 +896,53 @@ void scenario_structure_bsp_unload(
 	cache_file_globals.structure_bsp_header = NULL;
 
 	return;
+}
+
+/* port: a tag made in memory while a map is loaded (its definition at
+`base_address`, which the caller keeps until the next map's tags load),
+added after the map's own: its tag index, or NONE. The map's table of tags
+is copied the first time, with room for more. */
+long cache_file_add_tag(
+	unsigned long group_tag,
+	unsigned long parent_group_tag,
+	char *name,
+	void *base_address)
+{
+	enum { ADDED_TAG_ROOM = 64, ADDED_TAG_SALT = 0x5652 };
+	static struct cache_file_tag_instance *instances = NULL;
+	static long capacity = 0;
+	struct cache_file_tag_instance *instance;
+	long count;
+
+	if (!cache_file_globals.tags_loaded || !global_tag_instances)
+		return NONE;
+	count = cache_file_globals.tag_header->tag_count;
+	if (global_tag_instances != instances)
+	{
+		/* (the last map's copy goes with it) */
+		free(instances);
+		capacity = count + ADDED_TAG_ROOM;
+		instances = malloc(capacity * sizeof(*instances));
+		if (!instances)
+		{
+			capacity = 0;
+			return NONE;
+		}
+		memcpy(instances, global_tag_instances, count * sizeof(*instances));
+		global_tag_instances = instances;
+	}
+	if (count >= capacity || count >= 0x7FFF)
+		return NONE;
+	instance = &instances[count];
+	memset(instance, 0, sizeof(*instance));
+	instance->group_tag = (long)group_tag;
+	instance->parent_group_tags[0] = (long)parent_group_tag;
+	instance->parent_group_tags[1] = NONE;
+	instance->tag_index = (long)((ADDED_TAG_SALT << 16) | count);
+	instance->name = name;
+	instance->base_address = base_address;
+	cache_file_globals.tag_header->tag_count = count + 1;
+	return instance->tag_index;
 }
 
 void *tag_get(
