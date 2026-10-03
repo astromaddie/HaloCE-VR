@@ -1135,6 +1135,133 @@ static void vr_bend_joint(
 	}
 }
 
+static char const *const vr_finger_names[NUMBER_OF_VR_FINGERS] = { "thumb", "index", "middle", "ring", "pinky" };
+
+/* the side's finger joints (low, mid, tip of each); FALSE if any is missing */
+static boolean vr_find_fingers(
+	struct animation_graph *graph,
+	char const *side,
+	short joints[NUMBER_OF_VR_FINGERS][3])
+{
+	int finger;
+
+	for (finger = 0; finger < NUMBER_OF_VR_FINGERS; finger++)
+	{
+		joints[finger][0] = vr_find_finger(graph, side, vr_finger_names[finger], "low");
+		joints[finger][1] = vr_find_finger(graph, side, vr_finger_names[finger], "mid");
+		joints[finger][2] = vr_find_finger(graph, side, vr_finger_names[finger], "tip");
+		if (joints[finger][0] == NONE || joints[finger][1] == NONE || joints[finger][2] == NONE)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* the hand's length (wrist to the middle knuckle) and the way its palm
+faces: across the knuckles (pinky to index) from that line, the other way
+for a right hand (or a mirrored left) */
+static boolean vr_hand_frame(
+	real_matrix4x3 const *matrices,
+	short wrist,
+	short joints[NUMBER_OF_VR_FINGERS][3],
+	char const *side,
+	boolean mirrored,
+	real_vector3d *along,
+	real_vector3d *palm)
+{
+	real_vector3d across;
+
+	vr_point_minus(&matrices[joints[_vr_finger_middle][0]].position, &matrices[wrist].position, along);
+	vr_point_minus(&matrices[joints[_vr_finger_index][0]].position, &matrices[joints[_vr_finger_pinky][0]].position, &across);
+	cross_product3d(along, &across, palm);
+	if (vr_length(palm) < 1e-6f || vr_length(along) < 1e-6f)
+		return FALSE;
+	normalize3d(along);
+	normalize3d(palm);
+	if ((strcmp(side, " r ") == 0) != (mirrored != FALSE))
+	{
+		palm->i = -palm->i;
+		palm->j = -palm->j;
+		palm->k = -palm->k;
+	}
+	return TRUE;
+}
+
+/* an orthonormal frame's columns from a direction and a second one turned
+square to it */
+static void vr_frame_of(real_vector3d const *first, real_vector3d const *second, real frame[3][3])
+{
+	real_vector3d a = *first, b = *second, c;
+	real along = a.i * b.i + a.j * b.j + a.k * b.k;
+
+	b.i -= a.i * along;
+	b.j -= a.j * along;
+	b.k -= a.k * along;
+	normalize3d(&b);
+	cross_product3d(&a, &b, &c);
+	frame[0][0] = a.i; frame[0][1] = b.i; frame[0][2] = c.i;
+	frame[1][0] = a.j; frame[1][1] = b.j; frame[1][2] = c.j;
+	frame[2][0] = a.k; frame[2][1] = b.k; frame[2][2] = c.k;
+}
+
+/* The free hand held as the controller is: its length along the grip's
+forward, its palm the way the player's faces (OpenXR's grip +x points to
+the player's right for either hand: out of the left palm, into the back of
+the right). The whole hand turns about the wrist, its fingers with it. */
+static void vr_orient_free_hand(
+	struct animation_graph *graph,
+	real_matrix4x3 *matrices,
+	short wrist,
+	char const *side,
+	boolean mirrored,
+	int controller,
+	real_vector3d const *hand_forward,
+	real_vector3d const *hand_up)
+{
+	short joints[NUMBER_OF_VR_FINGERS][3];
+	real_vector3d along, palm, right, palm_wanted;
+	real model[3][3], wanted[3][3], rotation[3][3];
+	real_point3d pivot = matrices[wrist].position;
+	int row, column;
+	short index;
+
+	if (!vr_find_fingers(graph, side, joints) ||
+		!vr_hand_frame(matrices, wrist, joints, side, mirrored, &along, &palm))
+	{
+		return;
+	}
+	cross_product3d(hand_forward, hand_up, &right);
+	if (vr_length(&right) < 1e-6f)
+		return;
+	normalize3d(&right);
+	palm_wanted = right;
+	if (controller == 1)
+	{
+		palm_wanted.i = -palm_wanted.i;
+		palm_wanted.j = -palm_wanted.j;
+		palm_wanted.k = -palm_wanted.k;
+	}
+	vr_frame_of(&along, &palm, model);
+	vr_frame_of(hand_forward, &palm_wanted, wanted);
+	/* wanted * model^T */
+	for (row = 0; row < 3; row++)
+	{
+		for (column = 0; column < 3; column++)
+		{
+			rotation[row][column] = wanted[row][0] * model[column][0] + wanted[row][1] * model[column][1] +
+				wanted[row][2] * model[column][2];
+		}
+	}
+	for (index = wrist; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+	{
+		short at = index;
+
+		while (at > wrist)
+			at = TAG_BLOCK_GET_ELEMENT(&graph->nodes, at, struct vr_animation_graph_node)->parent_node_index;
+		if (at == wrist)
+			vr_carry(&matrices[index], &pivot, &pivot, rotation);
+	}
+}
+
 static void vr_pose_free_hand(
 	struct animation_graph *graph,
 	real_matrix4x3 *matrices,
@@ -1143,38 +1270,21 @@ static void vr_pose_free_hand(
 	boolean mirrored,
 	int controller)
 {
-	static char const *const finger_names[NUMBER_OF_VR_FINGERS] = { "thumb", "index", "middle", "ring", "pinky" };
-	/* degrees at the low and mid joints: at rest, and in a fist */
+	/* degrees at the low and mid joints: at rest, and in a fist (the thumb
+	tucked across) */
 	static const real relaxed[NUMBER_OF_VR_FINGERS][2] = { { 10, 12 }, { 18, 24 }, { 22, 28 }, { 26, 30 }, { 30, 32 } };
-	static const real fist[NUMBER_OF_VR_FINGERS][2] = { { 35, 35 }, { 75, 85 }, { 80, 90 }, { 80, 90 }, { 80, 90 } };
+	static const real fist[NUMBER_OF_VR_FINGERS][2] = { { 50, 55 }, { 75, 85 }, { 80, 90 }, { 80, 90 }, { 80, 90 } };
 	short joints[NUMBER_OF_VR_FINGERS][3];
-	real_vector3d along, across, palm;
+	real_vector3d along, palm;
 	float grip, trigger;
 	int finger, joint;
 
-	for (finger = 0; finger < NUMBER_OF_VR_FINGERS; finger++)
+	if (!vr_find_fingers(graph, side, joints) ||
+		!vr_hand_frame(matrices, wrist, joints, side, mirrored, &along, &palm))
 	{
-		joints[finger][0] = vr_find_finger(graph, side, finger_names[finger], "low");
-		joints[finger][1] = vr_find_finger(graph, side, finger_names[finger], "mid");
-		joints[finger][2] = vr_find_finger(graph, side, finger_names[finger], "tip");
-		if (joints[finger][0] == NONE || joints[finger][1] == NONE || joints[finger][2] == NONE)
-			return;
+		return;
 	}
 	vr_hand_controls(controller, &grip, &trigger);
-	/* the palm: across the knuckles (pinky to index) from the wrist's line
-	to the middle finger */
-	vr_point_minus(&matrices[joints[_vr_finger_middle][0]].position, &matrices[wrist].position, &along);
-	vr_point_minus(&matrices[joints[_vr_finger_index][0]].position, &matrices[joints[_vr_finger_pinky][0]].position, &across);
-	cross_product3d(&along, &across, &palm);
-	if (vr_length(&palm) < 1e-6f)
-		return;
-	normalize3d(&palm);
-	if ((strcmp(side, " r ") == 0) != (mirrored != FALSE))
-	{
-		palm.i = -palm.i;
-		palm.j = -palm.j;
-		palm.k = -palm.k;
-	}
 	for (finger = 0; finger < NUMBER_OF_VR_FINGERS; finger++)
 	{
 		real closed = finger == _vr_finger_index && trigger > grip ? trigger * 0.6f : grip;
@@ -1473,6 +1583,7 @@ void vr_render_first_person_ik(
 		{
 			short *chain = side ? right : left;
 			boolean gun_arm = side == 1, on_gun;
+			real_vector3d free_forward = { 1.0f, 0.0f, 0.0f }, free_up = { 0.0f, 0.0f, 1.0f };
 			real outward = (gun_arm == (weapon_hand == 1)) ? 1.0f : -1.0f;
 			int controller = gun_arm ? weapon_hand : 1 - weapon_hand;
 
@@ -1500,16 +1611,30 @@ void vr_render_first_person_ik(
 					vr_point_minus(&hand, &target, &gap);
 					if (vr_length(&gap) > 0.15f * units)
 					{
-						target = hand;
+						/* the grip pose is in the palm: the wrist a little
+						behind it, along the hand */
+						normalize3d(&hand_forward);
+						target.x = hand.x - hand_forward.i * 0.07f * units;
+						target.y = hand.y - hand_forward.j * 0.07f * units;
+						target.z = hand.z - hand_forward.k * 0.07f * units;
+						free_forward = hand_forward;
+						free_up = hand_up;
 						on_gun = FALSE;
 					}
 				}
 			}
 			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, on_gun);
-			/* the hand off the gun: relaxed, or closing with the controller */
+			/* the hand off the gun: held as the controller is, its fingers
+			relaxed or closing with the grip */
 			if (!on_gun)
-				vr_pose_free_hand(graph, matrices, chain[_vr_arm_hand], side ? " r " : " l ",
-					vr_render_first_person_mirrored(), controller);
+			{
+				boolean mirrored = vr_render_first_person_mirrored();
+				char const *hand_side = side ? " r " : " l ";
+
+				vr_orient_free_hand(graph, matrices, chain[_vr_arm_hand], hand_side, mirrored, controller,
+					&free_forward, &free_up);
+				vr_pose_free_hand(graph, matrices, chain[_vr_arm_hand], hand_side, mirrored, controller);
+			}
 		}
 	}
 }
