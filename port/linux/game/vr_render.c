@@ -1303,7 +1303,22 @@ void vr_render_first_person_ik(
 		real_point3d head = vr_render.head_camera.position, shoulder, target;
 		real_vector3d forward, right_side, up = { 0.0f, 0.0f, 1.0f }, pole;
 
-		if (!vr_heading_forward(forward.n))
+		/* The shoulders turn with the head (its yaw), and sit behind the
+		eyes: the model's upper arms end partway, open, and a shoulder left
+		where the body faces would bring that end into view as the head
+		turns toward it. The hands stay on the controllers (the arms reach
+		for them). Looking straight down, the head's forward has no yaw left:
+		its up (then pointing ahead) gives it. */
+		forward = vr_render.head_camera.forward;
+		forward.k = 0.0f;
+		if (magnitude_squared3d(&forward) < 0.25f)
+		{
+			real toward = vr_render.head_camera.forward.k < 0.0f ? 1.0f : -1.0f;
+
+			forward.i += vr_render.head_camera.up.i * toward;
+			forward.j += vr_render.head_camera.up.j * toward;
+		}
+		if (magnitude_squared3d(&forward) < 1e-6f && !vr_heading_forward(forward.n))
 			forward = vr_render.head_camera.forward;
 		forward.k = 0.0f;
 		normalize3d(&forward);
@@ -1322,9 +1337,9 @@ void vr_render_first_person_ik(
 			real outward = (gun_arm == (weapon_hand == 1)) ? 1.0f : -1.0f;
 			int controller = gun_arm ? weapon_hand : 1 - weapon_hand;
 
-			/* shoulders below and either side of the eyes, a little back */
-			shoulder.x = head.x + (right_side.i * 0.17f * outward - forward.i * 0.06f) * units;
-			shoulder.y = head.y + (right_side.j * 0.17f * outward - forward.j * 0.06f) * units;
+			/* shoulders below and either side of the eyes, behind them */
+			shoulder.x = head.x + (right_side.i * 0.17f * outward - forward.i * 0.12f) * units;
+			shoulder.y = head.y + (right_side.j * 0.17f * outward - forward.j * 0.12f) * units;
 			shoulder.z = head.z - 0.22f * units;
 			/* elbows down, out and back */
 			pole.i = right_side.i * 0.6f * outward - forward.i * 0.3f;
