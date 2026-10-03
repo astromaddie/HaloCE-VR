@@ -405,6 +405,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_motion", _config_integer, "0", "HALO_VR_DIAG_MOTION", _environment_value, _platform_vr,
 		"Log this many frames of motion (each frame's display step, the blend\n"
 		"between ticks, the tick and the camera), from the first view drawn." },
+	{ "vr.diag_free_hand", _config_real, "-1.0", "HALO_VR_DIAG_FREE_HAND", _environment_value, _platform_vr,
+		"With vr.force_render: hold the other hand up ahead of the eyes, its grip\n"
+		"this closed (0 to 1); below 0, not." },
 	{ "vr.diag_two_handed", _config_boolean, "false", "HALO_VR_DIAG_TWO_HANDED", _environment_value, _platform_vr,
 		"With vr.force_render: hold the left hand on the gun, ahead and a little\n"
 		"left of the right." },

@@ -145,6 +145,9 @@ static struct
 	float diag_yaw, diag_hand_yaw, diag_walk_speed;
 	double diag_walk_start;
 	int diag_two_handed;
+	/* vr.diag_free_hand: the synthetic other hand held up ahead of the eyes,
+	gripping this much (below 0: not) */
+	float diag_free_hand;
 	/* frames left to log the motion of (vr.diag_motion): each frame's
 	display step, the blend between ticks, the tick and the camera */
 	int diag_motion;
@@ -359,6 +362,7 @@ void vr_initialize(void)
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
 	vr.room_held = 1;
 	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
+	vr.diag_free_hand = (float)config_real("vr.diag_free_hand");
 	vr.diag_motion = config_integer("vr.diag_motion");
 	vr.diag_buttons = config_boolean("vr.diag_buttons");
 	vr.dump_frame = config_integer("vr.dump_frame");
@@ -1003,6 +1007,19 @@ static void synthesize_views(void)
 			memcpy(vr.frame.aim[hand].orientation, hand == vr.weapon_hand ? turned : yaw, sizeof(yaw));
 			vr.frame.hand_valid[hand] = 3;
 		}
+		if (vr.diag_free_hand >= 0.0f)
+		{
+			/* the other hand up ahead of the eyes, a little to its side,
+			gripping vr.diag_free_hand */
+			float up_ahead[3] = { vr.weapon_hand ? -0.10f : 0.10f, -0.08f, -0.30f };
+			int other = 1 - vr.weapon_hand, axis;
+
+			rotate(yaw, up_ahead, vr.frame.grip[other].position);
+			for (axis = 0; axis < 3; axis++)
+				vr.frame.grip[other].position[axis] += walk[axis];
+			memcpy(vr.frame.aim[other].position, vr.frame.grip[other].position, sizeof(up_ahead));
+			vr.frame.squeeze[other] = vr.diag_free_hand;
+		}
 		if (vr.diag_two_handed)
 		{
 			/* the left hand on the gun: 30 cm ahead of the right, 10 cm left */
@@ -1024,7 +1041,7 @@ int vr_stereo_begin(void)
 	if (!vr.active || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_walk_speed != 0.0f))
+		vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
 		synthesize_views();
 	vr.stereo = vr.stereo_enabled && (vr.frame.flags & needed) == needed;
 	return vr.stereo;
@@ -1410,7 +1427,7 @@ int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_headi
 	if (!vr.active || !vr.stereo_enabled || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_walk_speed != 0.0f))
+		vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
 		synthesize_views();
 	if ((vr.frame.flags & needed) != needed)
 		return 0;
@@ -1547,6 +1564,16 @@ int vr_weapon_view(const float position[3], float out_position[3], float out_for
 	extra[1] = -vr.weapon_offset[1];
 	extra[2] = -vr.weapon_offset[2];
 	return hand_view(&pose, extra, position, out_position, out_forward, out_up);
+}
+
+int vr_hand_controls(int hand, float *grip, float *trigger)
+{
+	*grip = *trigger = 0.0f;
+	if (!vr.active || hand < 0 || hand > 1 || !(vr.frame.hand_valid[hand] & 1))
+		return 0;
+	*grip = vr.frame.squeeze[hand];
+	*trigger = vr.frame.trigger[hand];
+	return 1;
 }
 
 int vr_hand_world(int hand, const float position[3], float out_position[3], float out_forward[3], float out_up[3])

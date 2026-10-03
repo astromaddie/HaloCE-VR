@@ -1050,6 +1050,145 @@ static void vr_carry(
 	vr_rotate_vector(rotation, &node->up, &node->up);
 }
 
+/* ---------- the free hand's fingers
+
+The animation poses the other hand for the gun (or leaves it flat). Off the
+gun it is posed here: each finger bent at its two joints (low, mid) toward
+the palm, a little at rest, into a fist as the controller's grip closes; the
+index follows the trigger. The palm's side is across the knuckles from the
+wrist (Halo's axes: +x forward, +y left, +z up), the other way for a mirrored
+hand. */
+
+enum
+{
+	_vr_finger_thumb,
+	_vr_finger_index,
+	_vr_finger_middle,
+	_vr_finger_ring,
+	_vr_finger_pinky,
+	NUMBER_OF_VR_FINGERS
+};
+
+/* a finger's joint ("low", "mid", "tip") of the side's hand, or NONE */
+static short vr_find_finger(
+	struct animation_graph *graph,
+	char const *side,
+	char const *finger,
+	char const *joint)
+{
+	short index;
+
+	for (index = 0; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+	{
+		struct vr_animation_graph_node const *node =
+			TAG_BLOCK_GET_ELEMENT(&graph->nodes, index, struct vr_animation_graph_node);
+
+		if (strstr(node->name, side) && strstr(node->name, finger) && strstr(node->name, joint))
+			return index;
+	}
+	return NONE;
+}
+
+/* turns node `joint` and all it carries about the joint, its bone (toward
+`child`) bent by `angle` radians toward `palm` */
+static void vr_bend_joint(
+	struct animation_graph *graph,
+	real_matrix4x3 *matrices,
+	short joint,
+	short child,
+	real_vector3d const *palm,
+	real angle)
+{
+	real_vector3d bone, toward, bent;
+	real rotation[3][3], along, length;
+	real_point3d pivot = matrices[joint].position;
+	short index;
+
+	vr_point_minus(&matrices[child].position, &pivot, &bone);
+	length = vr_length(&bone);
+	if (length < 1e-5f || angle == 0.0f)
+		return;
+	bone.i /= length;
+	bone.j /= length;
+	bone.k /= length;
+	/* the palm's direction square to the bone */
+	along = palm->i * bone.i + palm->j * bone.j + palm->k * bone.k;
+	toward.i = palm->i - bone.i * along;
+	toward.j = palm->j - bone.j * along;
+	toward.k = palm->k - bone.k * along;
+	if (vr_length(&toward) < 1e-4f)
+		return;
+	normalize3d(&toward);
+	bent.i = bone.i * (real)cos(angle) + toward.i * (real)sin(angle);
+	bent.j = bone.j * (real)cos(angle) + toward.j * (real)sin(angle);
+	bent.k = bone.k * (real)cos(angle) + toward.k * (real)sin(angle);
+	vr_rotation_between(&bone, &bent, rotation);
+	/* the joint and the nodes under it (the graph lists parents first) */
+	for (index = joint; index < graph->nodes.count && index < MAXIMUM_NODES_PER_ANIMATION; index++)
+	{
+		short at = index;
+
+		while (at != joint && at > joint)
+			at = TAG_BLOCK_GET_ELEMENT(&graph->nodes, at, struct vr_animation_graph_node)->parent_node_index;
+		if (at == joint)
+			vr_carry(&matrices[index], &pivot, &pivot, rotation);
+	}
+}
+
+static void vr_pose_free_hand(
+	struct animation_graph *graph,
+	real_matrix4x3 *matrices,
+	short wrist,
+	char const *side,
+	boolean mirrored,
+	int controller)
+{
+	static char const *const finger_names[NUMBER_OF_VR_FINGERS] = { "thumb", "index", "middle", "ring", "pinky" };
+	/* degrees at the low and mid joints: at rest, and in a fist */
+	static const real relaxed[NUMBER_OF_VR_FINGERS][2] = { { 10, 12 }, { 18, 24 }, { 22, 28 }, { 26, 30 }, { 30, 32 } };
+	static const real fist[NUMBER_OF_VR_FINGERS][2] = { { 35, 35 }, { 75, 85 }, { 80, 90 }, { 80, 90 }, { 80, 90 } };
+	short joints[NUMBER_OF_VR_FINGERS][3];
+	real_vector3d along, across, palm;
+	float grip, trigger;
+	int finger, joint;
+
+	for (finger = 0; finger < NUMBER_OF_VR_FINGERS; finger++)
+	{
+		joints[finger][0] = vr_find_finger(graph, side, finger_names[finger], "low");
+		joints[finger][1] = vr_find_finger(graph, side, finger_names[finger], "mid");
+		joints[finger][2] = vr_find_finger(graph, side, finger_names[finger], "tip");
+		if (joints[finger][0] == NONE || joints[finger][1] == NONE || joints[finger][2] == NONE)
+			return;
+	}
+	vr_hand_controls(controller, &grip, &trigger);
+	/* the palm: across the knuckles (pinky to index) from the wrist's line
+	to the middle finger */
+	vr_point_minus(&matrices[joints[_vr_finger_middle][0]].position, &matrices[wrist].position, &along);
+	vr_point_minus(&matrices[joints[_vr_finger_index][0]].position, &matrices[joints[_vr_finger_pinky][0]].position, &across);
+	cross_product3d(&along, &across, &palm);
+	if (vr_length(&palm) < 1e-6f)
+		return;
+	normalize3d(&palm);
+	if ((strcmp(side, " r ") == 0) != (mirrored != FALSE))
+	{
+		palm.i = -palm.i;
+		palm.j = -palm.j;
+		palm.k = -palm.k;
+	}
+	for (finger = 0; finger < NUMBER_OF_VR_FINGERS; finger++)
+	{
+		real closed = finger == _vr_finger_index && trigger > grip ? trigger * 0.6f : grip;
+
+		for (joint = 0; joint < 2; joint++)
+		{
+			real degrees = relaxed[finger][joint] + (fist[finger][joint] - relaxed[finger][joint]) * closed;
+
+			vr_bend_joint(graph, matrices, joints[finger][joint], joints[finger][joint + 1], &palm,
+				degrees * (real)(3.14159265 / 180.0));
+		}
+	}
+}
+
 /* one arm: the shoulder, and the hand's target; bones[] the arm's nodes */
 static void vr_solve_arm(
 	struct animation_graph *graph,
@@ -1367,6 +1506,10 @@ void vr_render_first_person_ik(
 				}
 			}
 			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, on_gun);
+			/* the hand off the gun: relaxed, or closing with the controller */
+			if (!on_gun)
+				vr_pose_free_hand(graph, matrices, chain[_vr_arm_hand], side ? " r " : " l ",
+					vr_render_first_person_mirrored(), controller);
 		}
 	}
 }
