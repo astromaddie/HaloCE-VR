@@ -144,6 +144,10 @@ static struct
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw, diag_hand_yaw, diag_walk_speed;
+	/* vr.diag_sweep: the synthetic head's yaw and pitch (radians) for each
+	of a run of dumps, vr.diag_sweep_frames apart from vr.dump_frame on */
+	int sweep_count, sweep_frames;
+	float sweep_yaw[12], sweep_pitch[12];
 	/* vr.diag_pitch: the synthetic head looking up (positive) or down, radians */
 	float diag_pitch;
 	double diag_walk_start;
@@ -397,6 +401,30 @@ void vr_initialize(void)
 	}
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
 	vr.diag_pitch = (float)config_real("vr.diag_pitch") * 0.017453293f;
+	{
+		/* "yaw:pitch;yaw:pitch;..." in degrees */
+		const char *sweep = config_string("vr.diag_sweep");
+
+		vr.sweep_count = 0;
+		vr.sweep_frames = config_integer("vr.diag_sweep_frames");
+		while (*sweep && vr.sweep_count < (int)(sizeof(vr.sweep_yaw) / sizeof(vr.sweep_yaw[0])))
+		{
+			float yaw = 0.0f, pitch = 0.0f;
+
+			if (sscanf(sweep, "%f:%f", &yaw, &pitch) == 2)
+			{
+				vr.sweep_yaw[vr.sweep_count] = yaw * 0.017453293f;
+				vr.sweep_pitch[vr.sweep_count] = pitch * 0.017453293f;
+				vr.sweep_count++;
+			}
+			while (*sweep && *sweep != ';')
+				sweep++;
+			if (*sweep == ';')
+				sweep++;
+		}
+		if (vr.sweep_frames < 1)
+			vr.sweep_count = 0;
+	}
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
 	vr.room_held = 1;
@@ -1042,9 +1070,48 @@ static void dump_image(unsigned int which, int index, const char *name);
 
 /* this frame's images are to be written (vr.dump_frame of stereo play,
 vr.dump_cinema_frame of cutscenes) */
+/* vr.diag_sweep: which of its head poses this stereo frame has (the next
+dump's, from just after the last dump on) */
+static int sweep_index(void)
+{
+	int index;
+
+	if (vr.sweep_count <= 0 || (long)vr.stereo_frames <= (long)vr.dump_frame)
+		return 0;
+	index = (int)((vr.stereo_frames - vr.dump_frame + vr.sweep_frames - 1) / vr.sweep_frames);
+	return index < vr.sweep_count ? index : vr.sweep_count - 1;
+}
+
+/* this stereo frame is one to dump: vr.dump_frame, or with vr.diag_sweep
+each of its poses' */
+static int dump_frame_now(void)
+{
+	if (vr.dump_frame <= 0)
+		return 0;
+	if (vr.sweep_count <= 0)
+		return vr.stereo_frames == vr.dump_frame;
+	return vr.stereo_frames >= vr.dump_frame && (vr.stereo_frames - vr.dump_frame) % vr.sweep_frames == 0 &&
+		(int)((vr.stereo_frames - vr.dump_frame) / vr.sweep_frames) < vr.sweep_count;
+}
+
+/* a dump's file name: with vr.diag_sweep, its pose's number in it
+("vr-eye0-s2.bmp") */
+static const char *dump_named(const char *name)
+{
+	static char names[4][64];
+	static int next;
+	char *named = names[next++ & 3];
+	const char *dot = strrchr(name, '.');
+
+	if (vr.sweep_count <= 0 || !vr.stereo || !dot)
+		return name;
+	snprintf(named, sizeof(names[0]), "%.*s-s%d%s", (int)(dot - name), name, sweep_index(), dot);
+	return named;
+}
+
 static int dumping(void)
 {
-	return (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame) ||
+	return (vr.stereo && dump_frame_now()) ||
 		(vr.cinema && vr.dump_cinema_frame > 0 && vr.cinema_frames == vr.dump_cinema_frame);
 }
 
@@ -1095,7 +1162,7 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	}
 	/* vr.dump_frame: the stereo frame's images, as they are shown */
 	if (dumping() && which < 3)
-		dump_image(which, index, names[which]);
+		dump_image(which, index, dump_named(names[which]));
 	host_xr_release(which);
 	return 1;
 }
@@ -1108,8 +1175,18 @@ tracks nothing) */
 static void synthesize_views(void)
 {
 	static const float fov[2][4] = { { -1.028f, 0.885f, 0.864f, -1.048f }, { -0.885f, 1.028f, 0.864f, -1.048f } };
-	float yaw[4] = { 0.0f, sinf(vr.diag_yaw * 0.5f), 0.0f, cosf(vr.diag_yaw * 0.5f) }, look[4];
+	float yaw[4], look[4];
 	int eye;
+
+	if (vr.sweep_count > 0)
+	{
+		vr.diag_yaw = vr.sweep_yaw[sweep_index()];
+		vr.diag_pitch = vr.sweep_pitch[sweep_index()];
+	}
+	yaw[0] = 0.0f;
+	yaw[1] = sinf(vr.diag_yaw * 0.5f);
+	yaw[2] = 0.0f;
+	yaw[3] = cosf(vr.diag_yaw * 0.5f);
 
 	float walk[3] = { 0.0f, 0.0f, 0.0f };
 
@@ -1203,7 +1280,7 @@ int vr_stereo_begin(void)
 	if (!vr.active || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
+		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f || vr.sweep_count > 0))
 		synthesize_views();
 	vr.stereo = vr.stereo_enabled && (vr.frame.flags & needed) == needed;
 	return vr.stereo;
@@ -1589,7 +1666,7 @@ int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_headi
 	if (!vr.active || !vr.stereo_enabled || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
+		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f || vr.sweep_count > 0))
 		synthesize_views();
 	if ((vr.frame.flags & needed) != needed)
 		return 0;
@@ -2252,7 +2329,7 @@ static int copy_hud(GLuint texture)
 		vr.copy_ms += now_ms() - copy_start;
 	}
 	if (dumping())
-		dump_image(which, index, "vr-hud.bmp");
+		dump_image(which, index, dump_named("vr-hud.bmp"));
 	host_xr_release(which);
 	return 1;
 }
@@ -2674,7 +2751,7 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			memcpy(layers.reticle_pose.orientation, vr.frame.head.orientation, sizeof(layers.reticle_pose.orientation));
 			layers.reticle_size[0] = layers.reticle_size[1] = 0.018f * vr.reticle_distance;
 			layers.flags |= HALO_XR_LAYER_RETICLE;
-			if (vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+			if (dump_frame_now())
 				platform_log("vr: reticle %.2f m along the hand's aim", vr.reticle_distance);
 		}
 		if (vr.scope_resolved && (vr.frame.hand_valid[vr.weapon_hand] & 2) && vr.scope_size > 0.0f)
@@ -2705,7 +2782,10 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		vr.fade -= (float)(vr.frame.predicted_display_period * 1e-9) / VR_FADE_SECONDS;
 	}
 	copied = now_ms();
-	if (vr.stereo && vr.dump_frame > 0 && vr.stereo_frames == vr.dump_frame)
+	if (vr.stereo && dump_frame_now() && vr.sweep_count > 0)
+		platform_log("vr-sweep: dump %d, head yaw %.0f, pitch %.0f", sweep_index(),
+			vr.sweep_yaw[sweep_index()] * 57.29578f, vr.sweep_pitch[sweep_index()] * 57.29578f);
+	if (vr.stereo && dump_frame_now())
 		platform_log("vr: aim at the dump: %s, %s%s, heading %.1f, head yaw %.1f, aim yaw %.1f",
 			vr.seated ? "seated" : "on foot", vr.hand_aiming ? "hand aims" : "head aims",
 			vr.two_handed ? " with both hands" : "",

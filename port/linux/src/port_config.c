@@ -399,6 +399,11 @@ static const struct config_setting config_settings[] =
 	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
 		"Draw stereo frames with the headset off (in standby), from a head\n"
 		"looking ahead: for testing." },
+	{ "vr.diag_sweep", _config_string, "\"\"", "HALO_VR_DIAG_SWEEP", _environment_value, _platform_vr,
+		"With vr.force_render and vr.dump_frame: dump once for each head pose of\n"
+		"\"yaw:pitch;yaw:pitch;...\" (degrees), vr.diag_sweep_frames apart." },
+	{ "vr.diag_sweep_frames", _config_integer, "180", "HALO_VR_DIAG_SWEEP_FRAMES", _environment_value, _platform_vr,
+		"Stereo frames between vr.diag_sweep's dumps." },
 	{ "vr.diag_pitch", _config_real, "0.0", "HALO_VR_DIAG_PITCH", _environment_value, _platform_vr,
 		"With vr.force_render: tilt that head up by this many degrees (down if\n"
 		"negative)." },
