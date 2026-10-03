@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Merged over src/main's manifest in the VR build (configure.py with the vr option):
      an OpenXR app for standalone headsets such as the Steam Frame. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
 
@@ -20,6 +21,10 @@
     </queries>
 
     <application>
+        <!-- no start on being reinstalled (src/main's updater does that): on a
+             shared headset each install would launch the game, and SteamVR
+             would quit whichever app was running for it -->
+        <receiver android:name=".UpdateReceiver" tools:node="remove" />
         <activity android:name=".LauncherActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
