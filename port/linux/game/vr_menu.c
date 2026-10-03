@@ -265,9 +265,14 @@ static void *vr_menu_allocate(
 
 	if (vr_menu.allocation_count >= (long)NUMBEROF(vr_menu.allocations))
 		return NULL;
-	memory = calloc(1, (size_t)size);
+	/* (the game's malloc, as its free that lets these go is: cseries.h
+	redirects both, not calloc) */
+	memory = malloc((size_t)size);
 	if (memory)
+	{
+		memset(memory, 0, (size_t)size);
 		vr_menu.allocations[vr_menu.allocation_count++] = memory;
+	}
 	return memory;
 }
 
