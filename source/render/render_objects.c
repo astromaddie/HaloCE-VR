@@ -623,6 +623,14 @@ static void render_object_list(
 					real_matrix4x3 *node_matrices = object_get_node_matrices(object_index);
 #endif
 
+#ifdef HALO_VR
+					/* (the body in a seat two-sided, its insides dark: the
+					shoulders and the collar, near the eyes, show no hole.
+					Not on foot: there the folded collar and shoulders leave
+					thin sheets over the chest that, drawn both ways, hid it) */
+					if (vr_body && object->object.parent_object_index != NONE)
+						halo_vr_two_sided(TRUE);
+#endif
 					render_model(
 						definition->object.model.index,
 						level_of_detail_pixels,
@@ -637,6 +645,10 @@ static void render_object_list(
 						object_index,
 						object->object.forced_shader_permutation_index,
 						data->no_planar_fog ? FLAG(_render_model_no_planar_fog_bit) : 0);
+#ifdef HALO_VR
+					if (vr_body)
+						halo_vr_two_sided(FALSE);
+#endif
 
 					if (debug_objects)
 					{

@@ -1802,10 +1802,13 @@ boolean vr_render_body_wanted(
 	return vr_aiming();
 }
 
-/* the node, or one above it, is the head, the neck, a clavicle (the
-shoulder: with the upper arm gone its triangles stretched into shards) or
-an upper arm, or for the legs alone the spine (all above the hips). In a
-seat only the head and neck: the arms are on the vehicle's controls */
+/* the node, or one above it, is the head, a clavicle (the shoulder: with
+the upper arm gone its triangles stretched into shards) or an upper arm, or
+for the legs alone the spine (all above the hips), and on foot the neck.
+In a seat only the head: the arms are on the vehicle's controls, and the
+neck stays, the head shrunk into its base (vr_render_body_nodes) closing it
+like a dimple (with the neck gone too, its opening looked into the body).
+On foot the neck, kept, rose toward the eyes: there it goes */
 static boolean vr_body_node_hidden(
 	struct model *model,
 	short node_index,
@@ -1819,8 +1822,9 @@ static boolean vr_body_node_hidden(
 	{
 		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
 
-		if (strstr(node->name, "head") || strstr(node->name, "neck") ||
-			(!seated && (strstr(node->name, "clavicle") || strstr(node->name, "upperarm"))) ||
+		if (strstr(node->name, "head") ||
+			(!seated && (strstr(node->name, "neck") || strstr(node->name, "clavicle") ||
+				strstr(node->name, "upperarm"))) ||
 			(legs && strstr(node->name, "spine")))
 			return TRUE;
 		node_index = node->parent_node_index;
@@ -1942,6 +1946,12 @@ its hand, its elbow bent as before, and the hands are put back exactly as
 the animation has them: on the wheel, the handles, the controls. */
 #define VR_SEAT_BODY_BACK 0.12f
 #define VR_SEAT_BODY_DOWN 0.04f
+/* the chest follows the head: turned by this share of the head's turn from
+the body's way, up to the most, and leaned toward where the head has gone
+(from its place at rest), up to the most (radians) */
+#define VR_SEAT_CHEST_TURN 0.6f
+#define VR_SEAT_CHEST_TURN_MOST 0.61f
+#define VR_SEAT_CHEST_LEAN_MOST 0.44f
 
 static void vr_body_seat_lean_back(
 	struct model *model,
@@ -1977,7 +1987,10 @@ static void vr_body_seat_lean_back(
 	+y left, +z up: forward is left across up); a gunner's turns with the
 	turret, apart from the vehicle */
 	{
-		real_vector3d left, facing;
+		real_vector3d left, facing, aside, head_forward, head_moved, leaning, chest_up;
+		real turn, c, s, ahead, sideways, height, rotation[3][3], tilt[3][3], yaw[3][3];
+		short neck = vr_body_find_node(model, " neck");
+		real_point3d pivot = matrices[spine].position;
 
 		vr_point_minus(&matrices[arms[0][0]].position, &matrices[arms[1][0]].position, &left);
 		cross_product3d(&left, global_up3d, &facing);
@@ -1985,9 +1998,48 @@ static void vr_body_seat_lean_back(
 		if (magnitude_squared3d(&facing) < 1e-8f)
 			return;
 		normalize3d(&facing);
+		cross_product3d(global_up3d, &facing, &aside);
 		back.i = -facing.i * VR_SEAT_BODY_BACK * units;
 		back.j = -facing.j * VR_SEAT_BODY_BACK * units;
 		back.k = -VR_SEAT_BODY_DOWN * units;
+		/* the chest turned and leaned after the head, about the spine's base */
+		vr_head_yaw_forward(&head_forward);
+		turn = (real)atan2(facing.i * head_forward.j - facing.j * head_forward.i,
+			facing.i * head_forward.i + facing.j * head_forward.j) * VR_SEAT_CHEST_TURN;
+		turn = PIN(turn, -VR_SEAT_CHEST_TURN_MOST, VR_SEAT_CHEST_TURN_MOST);
+		c = (real)cos(turn);
+		s = (real)sin(turn);
+		memset(yaw, 0, sizeof(yaw));
+		yaw[0][0] = c;
+		yaw[0][1] = -s;
+		yaw[1][0] = s;
+		yaw[1][1] = c;
+		yaw[2][2] = 1.0f;
+		vr_point_minus(&vr_render.head_camera.position, &vr_render.game_camera_position, &head_moved);
+		ahead = head_moved.i * facing.i + head_moved.j * facing.j;
+		sideways = head_moved.i * aside.i + head_moved.j * aside.j;
+		/* (the lean's lever: the spine's base to the neck) */
+		height = 0.5f * units;
+		if (neck != NONE)
+		{
+			real_vector3d spine_length;
+
+			vr_point_minus(&matrices[neck].position, &pivot, &spine_length);
+			if (vr_length(&spine_length) > 1e-4f)
+				height = vr_length(&spine_length);
+		}
+		/* (each way at most VR_SEAT_CHEST_LEAN_MOST) */
+		ahead = PIN(ahead, -height * (real)tan(VR_SEAT_CHEST_LEAN_MOST), height * (real)tan(VR_SEAT_CHEST_LEAN_MOST));
+		sideways = PIN(sideways, -height * (real)tan(VR_SEAT_CHEST_LEAN_MOST), height * (real)tan(VR_SEAT_CHEST_LEAN_MOST));
+		leaning.i = facing.i * ahead + aside.i * sideways;
+		leaning.j = facing.j * ahead + aside.j * sideways;
+		leaning.k = 0.0f;
+		chest_up.i = leaning.i;
+		chest_up.j = leaning.j;
+		chest_up.k = height;
+		vr_rotation_between(global_up3d, &chest_up, tilt);
+		vr_multiply_rotations(yaw, tilt, rotation);
+		vr_body_turn(model, matrices, node_count, spine, &pivot, rotation);
 	}
 	for (index = 0; index < node_count; index++)
 	{
