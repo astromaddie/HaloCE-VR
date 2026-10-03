@@ -1020,9 +1020,27 @@ static void vr_rotation_between(
 	c = u.i * v.i + u.j * v.j + u.k * v.k;
 	if (s < 1e-6f)
 	{
-		/* parallel (or opposite: then any axis across does) */
+		/* parallel: none; opposite: a half turn about any axis across them
+		(not the negated identity, a reflection, which turns a limb inside
+		out) */
 		memset(rotation, 0, sizeof(real) * 9);
-		rotation[0][0] = rotation[1][1] = rotation[2][2] = c >= 0.0f ? 1.0f : -1.0f;
+		if (c >= 0.0f)
+		{
+			rotation[0][0] = rotation[1][1] = rotation[2][2] = 1.0f;
+			return;
+		}
+		{
+			real_vector3d across = fabsf(u.i) < 0.9f ? *global_forward3d : *global_left3d, a;
+			int row, column;
+
+			cross_product3d(&u, &across, &a);
+			normalize3d(&a);
+			for (row = 0; row < 3; row++)
+			{
+				for (column = 0; column < 3; column++)
+					rotation[row][column] = 2.0f * a.n[row] * a.n[column] - (row == column ? 1.0f : 0.0f);
+			}
+		}
 		return;
 	}
 	length = s;
@@ -1799,7 +1817,9 @@ boolean vr_render_body_wanted(
 	sits it there, its hands on the controls */
 	if (object->object.parent_object_index != NONE)
 		return vr_body_seated(object_index);
-	return vr_aiming();
+	/* on foot, only seen from inside it (a scripted or transition camera
+	elsewhere shows the whole unit, as the game draws it) */
+	return vr_aiming() && director_get_perspective(local_player_index) == _director_perspective_first_person;
 }
 
 /* the node, or one above it, is the head, a clavicle (the shoulder: with
@@ -2004,9 +2024,15 @@ static void vr_body_seat_lean_back(
 		back.k = -VR_SEAT_BODY_DOWN * units;
 		/* the chest turned and leaned after the head, about the spine's base */
 		vr_head_yaw_forward(&head_forward);
-		turn = (real)atan2(facing.i * head_forward.j - facing.j * head_forward.i,
-			facing.i * head_forward.i + facing.j * head_forward.j) * VR_SEAT_CHEST_TURN;
-		turn = PIN(turn, -VR_SEAT_CHEST_TURN_MOST, VR_SEAT_CHEST_TURN_MOST);
+		{
+			/* (fading to none as the head looks behind, from 120 degrees: a
+			look over the shoulder would flip it from one side to the other) */
+			real angle = (real)atan2(facing.i * head_forward.j - facing.j * head_forward.i,
+				facing.i * head_forward.i + facing.j * head_forward.j);
+			real behind = (real)fabs(angle) > 2.0944f ? (3.14159265f - (real)fabs(angle)) / (3.14159265f - 2.0944f) : 1.0f;
+
+			turn = PIN(angle * VR_SEAT_CHEST_TURN, -VR_SEAT_CHEST_TURN_MOST, VR_SEAT_CHEST_TURN_MOST) * PIN(behind, 0.0f, 1.0f);
+		}
 		c = (real)cos(turn);
 		s = (real)sin(turn);
 		memset(yaw, 0, sizeof(yaw));
@@ -2028,17 +2054,26 @@ static void vr_body_seat_lean_back(
 			if (vr_length(&spine_length) > 1e-4f)
 				height = vr_length(&spine_length);
 		}
-		/* (each way at most VR_SEAT_CHEST_LEAN_MOST) */
-		ahead = PIN(ahead, -height * (real)tan(VR_SEAT_CHEST_LEAN_MOST), height * (real)tan(VR_SEAT_CHEST_LEAN_MOST));
-		sideways = PIN(sideways, -height * (real)tan(VR_SEAT_CHEST_LEAN_MOST), height * (real)tan(VR_SEAT_CHEST_LEAN_MOST));
 		leaning.i = facing.i * ahead + aside.i * sideways;
 		leaning.j = facing.j * ahead + aside.j * sideways;
 		leaning.k = 0.0f;
+		/* (at most VR_SEAT_CHEST_LEAN_MOST whichever way) */
+		{
+			real most = height * (real)tan(VR_SEAT_CHEST_LEAN_MOST), length = vr_length(&leaning);
+
+			if (length > most)
+			{
+				leaning.i *= most / length;
+				leaning.j *= most / length;
+			}
+		}
 		chest_up.i = leaning.i;
 		chest_up.j = leaning.j;
 		chest_up.k = height;
 		vr_rotation_between(global_up3d, &chest_up, tilt);
-		vr_multiply_rotations(yaw, tilt, rotation);
+		/* (turned about the vertical first, then tilted toward the head's
+		move as measured: yaw * tilt would turn the lean by the turn) */
+		vr_multiply_rotations(tilt, yaw, rotation);
 		vr_body_turn(model, matrices, node_count, spine, &pivot, rotation);
 	}
 	for (index = 0; index < node_count; index++)
@@ -2060,11 +2095,23 @@ static void vr_body_seat_lean_back(
 		pole.j = animated[fore].position.y - (animated[upper].position.y + animated[hand].position.y) * 0.5f;
 		pole.k = animated[fore].position.z - (animated[upper].position.z + animated[hand].position.z) * 0.5f;
 		vr_body_reach(model, matrices, node_count, upper, fore, hand, &animated[hand].position, &pole);
-		/* the hand (and its fingers) as the animation has it */
-		for (index = 0; index < node_count; index++)
+		/* the hand (and its fingers) as the animation has it, where the
+		forearm reached: on the controls, or short of them if out of reach
+		(else it came off at the wrist) */
 		{
-			if (vr_body_under(model, index, hand))
-				matrices[index] = animated[index];
+			real_vector3d short_by;
+
+			vr_point_minus(&matrices[hand].position, &animated[hand].position, &short_by);
+			for (index = 0; index < node_count; index++)
+			{
+				if (vr_body_under(model, index, hand))
+				{
+					matrices[index] = animated[index];
+					matrices[index].position.x += short_by.i;
+					matrices[index].position.y += short_by.j;
+					matrices[index].position.z += short_by.k;
+				}
+			}
 		}
 	}
 }
