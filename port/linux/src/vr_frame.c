@@ -145,6 +145,10 @@ static struct
 	float diag_yaw, diag_hand_yaw, diag_walk_speed;
 	double diag_walk_start;
 	int diag_two_handed;
+	/* frames left to log the motion of (vr.diag_motion): each frame's
+	display step, the blend between ticks, the tick and the camera */
+	int diag_motion;
+	long long diag_motion_display_time;
 	long dump_frame, dump_cinema_frame;
 	long stereo_frames, cinema_frames;
 	/* timing: vr.timing shortens the [vr-perf] window, vr.timing_gpu waits for the
@@ -344,6 +348,7 @@ void vr_initialize(void)
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
 	vr.room_held = 1;
 	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
+	vr.diag_motion = config_integer("vr.diag_motion");
 	vr.dump_frame = config_integer("vr.dump_frame");
 	vr.dump_cinema_frame = config_integer("vr.dump_cinema_frame");
 	if (vr.units_per_metre <= 0.0f)
@@ -1054,6 +1059,9 @@ out of walls) */
 /* port/linux/game/render_interpolation.c: how far this frame is between
 the two ticks the game's camera is blended from */
 float render_interpolation_fraction(void);
+/* game/game_time.c, port/linux/game/vr_render.c (vr.diag_motion) */
+long game_time_get(void);
+void vr_render_diag_camera(float out[3]);
 
 /* the head's offset from the recentred origin (with vr.roomscale, from the
 floor's point the player stands on, as far between its last two ticks as
@@ -2330,6 +2338,19 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	sfvr_haptic_flush(&vr.haptic_queue, vr.haptics, play_haptic, NULL);
 	frame_end(&layers);
 	ended = now_ms();
+	/* vr.diag_motion: a line a frame while the game draws a view (stereo or
+	a cutscene), for judging how evenly things move */
+	if (vr.diag_motion > 0 && (vr.stereo || vr.cinema))
+	{
+		float camera[3];
+
+		vr_render_diag_camera(camera);
+		platform_log("vr-motion: step %.3f ms, blend %.4f, tick %ld, camera %.5f %.5f %.5f",
+			vr.diag_motion_display_time ? (double)(vr.frame.predicted_display_time - vr.diag_motion_display_time) * 1e-6 : 0.0,
+			(double)render_interpolation_fraction(), game_time_get(), camera[0], camera[1], camera[2]);
+		vr.diag_motion_display_time = vr.frame.predicted_display_time;
+		vr.diag_motion--;
+	}
 	/* the [vr-perf] window: CPU stages apart from the waits (the game's own
 	work, the passes' draw calls, the copies into the images, ending the
 	frame), each eye's pass, the GPU's wait with vr.timing_gpu; a frame is

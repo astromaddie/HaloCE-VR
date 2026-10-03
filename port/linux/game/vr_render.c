@@ -64,6 +64,8 @@ static struct
 	/* the game's camera this frame, the head posed from it */
 	struct render_camera head_camera;
 	real_point3d game_camera_position;
+	/* the game's camera of the frame, as interpolated (vr.diag_motion) */
+	real_point3d diag_camera;
 	/* the camera the first-person weapon was posed from this frame */
 	struct render_camera weapon_camera;
 	boolean weapon_camera_valid;
@@ -418,6 +420,8 @@ short vr_render_windows(
 		vr_render.pass_of_window[eye] = _vr_render_pass_none;
 		vr_render.eye_of_window[eye] = NONE;
 	}
+	if (window_count >= 1)
+		vr_render.diag_camera = windows[0].render_camera.position;
 	if (window_count == 2 &&
 		windows[0].local_player_index != NONE &&
 		!windows[0].console_window &&
@@ -1350,6 +1354,15 @@ void vr_render_first_person_ik(
 			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, on_gun);
 		}
 	}
+}
+
+/* the game's camera of the frame (vr.diag_motion, vr_frame.c) */
+void vr_render_diag_camera(
+	float out[3])
+{
+	out[0] = vr_render.diag_camera.x;
+	out[1] = vr_render.diag_camera.y;
+	out[2] = vr_render.diag_camera.z;
 }
 
 #endif /* HALO_VR */
