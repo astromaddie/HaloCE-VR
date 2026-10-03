@@ -398,6 +398,9 @@ static const struct config_setting config_settings[] =
 	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
 		"Draw stereo frames with the headset off (in standby), from a head\n"
 		"looking ahead: for testing." },
+	{ "vr.diag_pitch", _config_real, "0.0", "HALO_VR_DIAG_PITCH", _environment_value, _platform_vr,
+		"With vr.force_render: tilt that head up by this many degrees (down if\n"
+		"negative)." },
 	{ "vr.diag_yaw", _config_real, "0.0", "HALO_VR_DIAG_YAW", _environment_value, _platform_vr,
 		"With vr.force_render: turn that head left by this many degrees." },
 	{ "vr.diag_hand_yaw", _config_real, "0.0", "HALO_VR_DIAG_HAND_YAW", _environment_value, _platform_vr,
@@ -894,7 +897,8 @@ static const struct config_range
 	{ "vr.weapon_offset_back", -0.5, 0.5, 0 },
 	{ "vr.snap_angle", 15.0, 90.0, 0 },                 /* sfvr */
 	{ "vr.smooth_turn_speed", 30.0, 360.0, 0 },         /* sfvr */
-	{ "vr.diag_yaw", -360.0, 360.0, 0 },                /* sfvr */
+	{ "vr.diag_yaw", -360.0, 360.0, 0 },
+	{ "vr.diag_pitch", -89.0, 89.0, 0 },                /* sfvr */
 	{ "vr.diag_hand_yaw", -360.0, 360.0, 0 },           /* sfvr */
 	{ "vr.diag_drive_seconds", 0.0, 3600.0, 0 },
 	{ "vr.diag_walk_speed", 0.0, 5.0, 0 },              /* sfvr */

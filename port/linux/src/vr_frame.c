@@ -143,6 +143,8 @@ static struct
 	/* diagnostics (vr.force_render, vr.diag_yaw, vr.dump_frame) */
 	int force_render;
 	float diag_yaw, diag_hand_yaw, diag_walk_speed;
+	/* vr.diag_pitch: the synthetic head looking up (positive) or down, radians */
+	float diag_pitch;
 	double diag_walk_start;
 	int diag_two_handed;
 	/* vr.diag_free_hand: the synthetic other hand held up ahead of the eyes,
@@ -358,6 +360,7 @@ void vr_initialize(void)
 		sfvr_perf_init(&vr.perf, vr.timing ? 2.0 : SFVR_PERF_DEFAULT_WINDOW_S, stages, 4);
 	}
 	vr.diag_yaw = (float)config_real("vr.diag_yaw") * 0.017453293f;
+	vr.diag_pitch = (float)config_real("vr.diag_pitch") * 0.017453293f;
 	vr.diag_hand_yaw = (float)config_real("vr.diag_hand_yaw") * 0.017453293f;
 	vr.diag_walk_speed = (float)config_real("vr.diag_walk_speed");
 	vr.room_held = 1;
@@ -953,7 +956,7 @@ tracks nothing) */
 static void synthesize_views(void)
 {
 	static const float fov[2][4] = { { -1.028f, 0.885f, 0.864f, -1.048f }, { -0.885f, 1.028f, 0.864f, -1.048f } };
-	float yaw[4] = { 0.0f, sinf(vr.diag_yaw * 0.5f), 0.0f, cosf(vr.diag_yaw * 0.5f) };
+	float yaw[4] = { 0.0f, sinf(vr.diag_yaw * 0.5f), 0.0f, cosf(vr.diag_yaw * 0.5f) }, look[4];
 	int eye;
 
 	float walk[3] = { 0.0f, 0.0f, 0.0f };
@@ -972,18 +975,25 @@ static void synthesize_views(void)
 		walk[2] *= distance;
 		walk[1] = 0.0f;
 	}
+	/* (the head turned by vr.diag_yaw, then pitched by vr.diag_pitch; the
+	hands keep to the yaw) */
+	{
+		float pitch[4] = { sinf(vr.diag_pitch * 0.5f), 0.0f, 0.0f, cosf(vr.diag_pitch * 0.5f) };
+
+		multiply(yaw, pitch, look);
+	}
 	memset(&vr.frame.head, 0, sizeof(vr.frame.head));
-	memcpy(vr.frame.head.orientation, yaw, sizeof(yaw));
+	memcpy(vr.frame.head.orientation, look, sizeof(look));
 	memcpy(vr.frame.head.position, walk, sizeof(walk));
 	for (eye = 0; eye < 2; eye++)
 	{
 		float offset[3] = { eye ? 0.032f : -0.032f, 0.0f, 0.0f };
 		int axis;
 
-		rotate(yaw, offset, vr.frame.eye[eye].position);
+		rotate(look, offset, vr.frame.eye[eye].position);
 		for (axis = 0; axis < 3; axis++)
 			vr.frame.eye[eye].position[axis] += walk[axis];
-		memcpy(vr.frame.eye[eye].orientation, yaw, sizeof(yaw));
+		memcpy(vr.frame.eye[eye].orientation, look, sizeof(look));
 		memcpy(vr.frame.fov[eye], fov[eye], sizeof(fov[eye]));
 	}
 	/* hands held ahead at the hips' height, the right one turned by
@@ -1041,7 +1051,7 @@ int vr_stereo_begin(void)
 	if (!vr.active || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
+		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
 		synthesize_views();
 	vr.stereo = vr.stereo_enabled && (vr.frame.flags & needed) == needed;
 	return vr.stereo;
@@ -1427,7 +1437,7 @@ int vr_aim(float game_yaw, int seated, int hand_may_aim, const float *base_headi
 	if (!vr.active || !vr.stereo_enabled || !frame_begin())
 		return 0;
 	if (vr.force_render && ((vr.frame.flags & needed) != needed || vr.diag_yaw != 0.0f ||
-		vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
+		vr.diag_pitch != 0.0f || vr.diag_walk_speed != 0.0f || vr.diag_free_hand >= 0.0f))
 		synthesize_views();
 	if ((vr.frame.flags & needed) != needed)
 		return 0;
