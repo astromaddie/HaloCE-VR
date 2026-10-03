@@ -118,6 +118,25 @@ enum
 
 /* ---------- structures */
 
+#ifdef HALO_VR
+/* a screen flash that only darkens what is under it (the darken type, or a
+lighten toward black, as a fade to black is); the types as
+rasterizer_xbox_screen_effect.c numbers them: 1 lighten, 2 darken */
+static boolean vr_screen_flash_darkens(
+	struct render_screen_flash const *flash)
+{
+	switch (flash->type)
+	{
+	case 2:
+		return TRUE;
+	case 1:
+		return flash->color.red + flash->color.green + flash->color.blue < 0.3f;
+	default:
+		return FALSE;
+	}
+}
+#endif
+
 /* ---------- prototypes */
 
 static void render_nonplayer_frame(
@@ -335,7 +354,12 @@ static void render_window(
 	{
 		halo_vr_clear_transparent();
 		interface_draw_screen();
-		rasterizer_screen_flash();
+		/* a flash or fade is drawn over the whole of each eye; here only one
+		that darkens, so that a fade to black takes the HUD with it (its
+		alpha is its brightness): one that lightens would make the panel a
+		lit box */
+		if (vr_screen_flash_darkens(&parameters.screen_flash))
+			rasterizer_screen_flash();
 		halo_screen_ui_offset(TRUE);
 		render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
 		halo_screen_ui_offset(FALSE);
@@ -449,6 +473,14 @@ static void render_window(
 			render_ui_widgets(local_player_index, &rasterizer_camera->viewport_bounds);
 			halo_screen_ui_offset(FALSE);
 		}
+#ifdef HALO_VR
+		/* but a screen flash or fade (a white flash into a scene, a fade to
+		black) covers the whole view, as the game's own blend over each eye */
+		else if (VR_RENDER_EYE())
+		{
+			rasterizer_screen_flash();
+		}
+#endif
 	}
 
 	bink_playback_render();
