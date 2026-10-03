@@ -919,8 +919,9 @@ long cache_file_add_tag(
 	count = cache_file_globals.tag_header->tag_count;
 	if (global_tag_instances != instances)
 	{
-		/* (the last map's copy goes with it) */
-		free(instances);
+		/* (the last map's copy goes with it; the game's free halts on NULL) */
+		if (instances)
+			free(instances);
 		capacity = count + ADDED_TAG_ROOM;
 		instances = malloc(capacity * sizeof(*instances));
 		if (!instances)
