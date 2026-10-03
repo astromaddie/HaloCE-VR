@@ -25,6 +25,7 @@ for with HALO_XR_RECENTRE_HEIGHT, and kept by a plain recentre.
 #include <math.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <SDL3/SDL.h>
 
@@ -837,7 +838,31 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	if (xr.initialized)
 		goto describe;
 	xr.failed = 1;
-	if (!initialize_loader() || !create_instance(out) || !create_session() || !choose_format())
+	if (!initialize_loader())
+		return -1;
+	/* SteamVR can be not yet running, or asleep with the headset (it fails
+	the instance with XR_ERROR_RUNTIME_FAILURE): wait for it a minute rather
+	than give up. A VR build has no flat screen in Lepton to fall back on:
+	frames posted to its window are refused, and the display's composer
+	then aborts and takes the container down. */
+	{
+		int attempt;
+
+		for (attempt = 0; !create_instance(out); attempt++)
+		{
+			if (xr.instance != XR_NULL_HANDLE)
+			{
+				xrDestroyInstance(xr.instance);
+				xr.instance = XR_NULL_HANDLE;
+			}
+			if (attempt >= 60)
+				return -1;
+			if (attempt % 10 == 0)
+				host_logf(HOST_LOG_WARN, "[openxr] no runtime yet (the headset asleep?): trying again for a minute");
+			sleep(1);
+		}
+	}
+	if (!create_session() || !choose_format())
 		return -1;
 	if (!check(xrEnumerateViewConfigurationViews(xr.instance, xr.system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
 		2, &view_count, views), "xrEnumerateViewConfigurationViews") || view_count != 2)

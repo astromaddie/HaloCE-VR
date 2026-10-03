@@ -304,8 +304,16 @@ void vr_initialize(void)
 	/* the flat screen and HUD layer: the game's 640x480 at twice the size */
 	if (host_xr_init(&vr.info, 1280, 960) != 0)
 	{
+#ifdef HALO_ANDROID
+		/* (Lepton has no flat screen to fall back on: the frames posted to
+		the window are refused and its display composer aborts, taking the
+		container with it; host_xr_init has waited a minute already) */
+		platform_log("vr: OpenXR is unavailable (is SteamVR running, the headset awake?); quitting");
+		exit(1);
+#else
 		platform_log("vr: OpenXR is unavailable; playing on the flat screen");
 		return;
+#endif
 	}
 	glGenFramebuffers(1, &vr.framebuffer);
 	{
