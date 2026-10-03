@@ -1300,7 +1300,7 @@ void vr_render_first_person_ik(
 		for (side = 0; side < 2; side++)
 		{
 			short *chain = side ? right : left;
-			boolean gun_arm = side == 1;
+			boolean gun_arm = side == 1, on_gun;
 			real outward = (gun_arm == (weapon_hand == 1)) ? 1.0f : -1.0f;
 			int controller = gun_arm ? weapon_hand : 1 - weapon_hand;
 
@@ -1313,6 +1313,9 @@ void vr_render_first_person_ik(
 			pole.j = right_side.j * 0.6f * outward - forward.j * 0.3f;
 			pole.k = -1.0f;
 			target = matrices[chain[_vr_arm_hand]].position;
+			/* a hand on the gun keeps the grip the animation gave it, not the
+			forearm's turn (which would twist its fingers off the gun) */
+			on_gun = TRUE;
 			if (!gun_arm)
 			{
 				/* the other hand on its controller, unless it is near the
@@ -1324,10 +1327,13 @@ void vr_render_first_person_ik(
 				{
 					vr_point_minus(&hand, &target, &gap);
 					if (vr_length(&gap) > 0.15f * units)
+					{
 						target = hand;
+						on_gun = FALSE;
+					}
 				}
 			}
-			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, gun_arm);
+			vr_solve_arm(graph, matrices, chain, shoulder, &target, &pole, on_gun);
 		}
 	}
 }
