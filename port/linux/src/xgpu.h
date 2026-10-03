@@ -50,6 +50,10 @@ changes GL state behind it (binding a texture to upload it, deleting one)
 must call this afterwards. */
 
 void xgpu_gl_state_invalidate(void);
+/* the device's current render target and viewport bound (they are bound
+lazily, at its next draw), for a draw of the headset's own (d3d8_gl.c,
+HALO_VR): 1 if the target has depth */
+int halo_vr_bind_current_target(void);
 
 /* ---------- generated source text */
 

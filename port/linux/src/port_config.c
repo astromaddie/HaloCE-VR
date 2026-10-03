@@ -432,6 +432,15 @@ static const struct config_setting config_settings[] =
 		"and vr-hud.bmp in the data folder; 0 none." },
 	{ "vr.timing", _config_boolean, "false", "HALO_VR_TIMING", _environment_value, _platform_vr,
 		"Log where each frame's time goes every 300 frames ([vr-frame])." },
+	{ "vr.visibility_mask", _config_boolean, "true", "HALO_VR_VISIBILITY_MASK", _environment_value, _platform_vr,
+		"Skip shading what the lenses never show of each eye (the runtime's\n"
+		"visibility mask)." },
+	{ "vr.timing_gpu_stamps", _config_boolean, "false", "HALO_VR_TIMING_GPU_STAMPS", _environment_value, _platform_vr,
+		"Log the GPU's time between the frame's points (vr-gpu-stamps), from\n"
+		"timestamps read a few frames on (Android)." },
+	{ "vr.timing_gpu_passes", _config_boolean, "false", "HALO_VR_TIMING_GPU_PASSES", _environment_value, _platform_vr,
+		"Wait for the GPU around each pass and copy, and log where the GPU's time\n"
+		"goes (vr-gpu-passes; slows the game)." },
 	{ "vr.timing_gpu", _config_boolean, "false", "HALO_VR_TIMING_GPU", _environment_value, _platform_vr,
 		"With vr.timing: wait for the GPU before showing each frame, to time it\n"
 		"apart (slows the game)." },

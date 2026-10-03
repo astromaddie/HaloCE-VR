@@ -141,5 +141,10 @@ void host_xr_haptic(unsigned int hand, float amplitude, float seconds);
 changes (STOPPING, then EXITING, which host_xr_begin_frame reports as
 HALO_XR_FRAME_EXIT); without a running session it reports the exit at once */
 void host_xr_request_exit(void);
+/* an eye's hidden-area triangles (XR_KHR_visibility_mask), vertices as x, y
+pairs in the view's tangent space (z = -1), into the buffers given: the
+index count, 0 if there is no mask or it does not fit */
+unsigned int host_xr_visibility_mask(unsigned int eye, float *vertices, unsigned int vertex_capacity,
+	unsigned int *indices, unsigned int index_capacity);
 
 #endif

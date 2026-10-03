@@ -15,6 +15,7 @@ swapchain images, whose GL texture names work in this context as they are.
 #include "vr.h"
 
 #include "guest_host.h"
+#include "xgpu.h"
 #include "sfvr/sfvr.h"
 #include "halo_android_abi.h"
 #include "halo_ui_pointer.h"
@@ -164,6 +165,19 @@ static struct
 	scope) and the [vr-perf] window (sfvr_perf); the last frame's display time
 	(nanoseconds), for the frames missed */
 	int timing, gpu_finish;
+	/* vr.timing_gpu_passes: each pass and copy waited for on the GPU, so its
+	time holds its GPU work (slows the frame; for where the GPU's time
+	goes): this window's sums (eyes, HUD, scope, copies, the rest of the
+	game's, ending) and frames */
+	int gpu_passes;
+	double gpu_pass_sum[7], copy_ms, eye_copy_ms;
+	int gpu_pass_frames;
+	/* vr.timing_gpu_stamps: GPU timestamps at the frame's points (read three
+	frames on, so nothing waits): this window's sums of the spans between
+	them, and the frames summed */
+	int gpu_stamps;
+	double gpu_stamp_sum[8];
+	int gpu_stamp_frames;
 	double frame_start, pass_start, pass_ms[4];
 	sfvr_perf perf;
 	long long last_display_time;
@@ -373,7 +387,9 @@ void vr_initialize(void)
 	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
 	vr.force_render = config_boolean("vr.force_render");
 	vr.timing = config_boolean("vr.timing");
-	vr.gpu_finish = config_boolean("vr.timing_gpu");
+	vr.gpu_passes = config_boolean("vr.timing_gpu_passes");
+	vr.gpu_stamps = config_boolean("vr.timing_gpu_stamps");
+	vr.gpu_finish = config_boolean("vr.timing_gpu") || vr.gpu_passes;
 	{
 		static const char *const stages[] = { "game", "render", "copy", "end" };
 
@@ -447,6 +463,29 @@ static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
 static void look_rotation(const float forward[3], const float up[3], float out[4]);
 static void multiply(const float a[4], const float b[4], float out[4]);
+
+/* ---------- GPU timestamps (vr.timing_gpu_stamps)
+
+The points of a stereo frame, in the order the GPU reaches them: the
+frame's start, each eye's pass begun and ended (its copy into the image
+follows its end), the HUD's pass begun and ended, the present (the HUD's
+copy, the reticle, the fade follow) and the frame handed over. */
+enum
+{
+	_gpu_stamp_frame,
+	_gpu_stamp_left_begin,
+	_gpu_stamp_left_end,
+	_gpu_stamp_right_begin,
+	_gpu_stamp_right_end,
+	_gpu_stamp_hud_begin,
+	_gpu_stamp_hud_end,
+	_gpu_stamp_present,
+	_gpu_stamp_handed,
+	NUMBER_OF_GPU_STAMPS
+};
+#define GPU_STAMP_FRAMES 4
+static void gpu_stamp(int point);
+static void gpu_stamps_collect(void);
 
 /* The system layer (the same in every port; the timing is sfvr_view's): View,
 the left controller's (Touch and Index: its upper face button), goes back on a
@@ -867,6 +906,7 @@ static int frame_begin(void)
 	layout_controls();
 	update_gestures();
 	vr.frame_start = now_ms();
+	gpu_stamp(_gpu_stamp_frame);
 	return 1;
 }
 
@@ -896,6 +936,54 @@ int vr_frame_seconds(double *seconds)
 	return 1;
 }
 
+/* ---------- GPU timestamps (vr.timing_gpu_stamps; the points above) */
+
+#ifdef HALO_ANDROID
+static GLuint gpu_stamp_queries[GPU_STAMP_FRAMES][NUMBER_OF_GPU_STAMPS];
+static unsigned int gpu_stamp_marked[GPU_STAMP_FRAMES];
+#endif
+
+static void gpu_stamp(int point)
+{
+#ifdef HALO_ANDROID
+	int slot = (int)(vr.frame_serial % GPU_STAMP_FRAMES);
+
+	if (!vr.gpu_stamps)
+		return;
+	if (!gpu_stamp_queries[0][0])
+		glGenQueries(GPU_STAMP_FRAMES * NUMBER_OF_GPU_STAMPS, &gpu_stamp_queries[0][0]);
+	if (point == _gpu_stamp_frame)
+		gpu_stamp_marked[slot] = 0;
+	glQueryCounterEXT(gpu_stamp_queries[slot][point], GL_TIMESTAMP_EXT);
+	gpu_stamp_marked[slot] |= 1u << point;
+#else
+	(void)point;
+#endif
+}
+
+/* the frame three before this one, if all its points were marked (a
+stereo frame) and the GPU has reached them: its spans added to the window */
+static void gpu_stamps_collect(void)
+{
+#ifdef HALO_ANDROID
+	int slot = (int)((vr.frame_serial + 1) % GPU_STAMP_FRAMES), point;
+	GLuint64 stamps[NUMBER_OF_GPU_STAMPS];
+	GLuint available = 0;
+
+	if (!vr.gpu_stamps || gpu_stamp_marked[slot] != (1u << NUMBER_OF_GPU_STAMPS) - 1)
+		return;
+	glGetQueryObjectuiv(gpu_stamp_queries[slot][_gpu_stamp_handed], GL_QUERY_RESULT_AVAILABLE, &available);
+	if (!available)
+		return;
+	for (point = 0; point < NUMBER_OF_GPU_STAMPS; point++)
+		glGetQueryObjectui64vEXT(gpu_stamp_queries[slot][point], GL_QUERY_RESULT, &stamps[point]);
+	gpu_stamp_marked[slot] = 0;
+	for (point = 1; point < NUMBER_OF_GPU_STAMPS; point++)
+		vr.gpu_stamp_sum[point - 1] += stamps[point] > stamps[point - 1] ? (stamps[point] - stamps[point - 1]) * 1e-6 : 0.0;
+	vr.gpu_stamp_frames++;
+#endif
+}
+
 void vr_pass_mark(int pass, int end)
 {
 	double now;
@@ -908,6 +996,10 @@ void vr_pass_mark(int pass, int end)
 		pass = 3;
 	if (pass < 0 || pass > 3)
 		return;
+	if (pass < 3 && vr.stereo)
+		gpu_stamp(_gpu_stamp_left_begin + pass * 2 + (end ? 1 : 0));
+	if (vr.gpu_passes)
+		glFinish();
 	now = now_ms();
 	if (end)
 		vr.pass_ms[pass] += now - vr.pass_start;
@@ -939,9 +1031,15 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 {
 	static const char *const names[] = { "vr-eye0.bmp", "vr-eye1.bmp", "vr-hud.bmp" };
 	int index = host_xr_acquire(which);
+	double copy_start = 0.0;
 
 	if (index < 0)
 		return 0;
+	if (vr.gpu_passes)
+	{
+		glFinish();
+		copy_start = now_ms();
+	}
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -961,6 +1059,17 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	if (vr.gpu_passes)
+	{
+		double took;
+
+		glFinish();
+		took = now_ms() - copy_start;
+		vr.copy_ms += took;
+		/* (the eyes' copies are made in the game's stage, as each eye ends) */
+		if (which < 2)
+			vr.eye_copy_ms += took;
+	}
 	/* vr.dump_frame: the stereo frame's images, as they are shown */
 	if (dumping() && which < 3)
 		dump_image(which, index, names[which]);
@@ -1914,6 +2023,158 @@ static GLuint link_program(const char *fragment_source, const char *name)
 	return program;
 }
 
+/* ---------- the visibility mask (vr.visibility_mask)
+
+What the lenses never show of each eye's image (XR_KHR_visibility_mask) is
+drawn first in the eye's pass at the nearest depth, black: the scene drawn
+after fails the depth test there and its fragments are never shaded (the
+eyes' cost is mostly their pixels). Its vertices are in the view's tangent
+space, made the eye's clip space from the runtime's field of view each
+frame; the game's target has its rows the other way up from GL's. */
+
+static const char mask_vertex_source[] =
+	"#version 300 es\n"
+	"layout(location = 0) in vec2 tangent;\n"
+	"uniform vec4 field; /* the tangents of left, right, down, up */\n"
+	"void main()\n"
+	"{\n"
+	"	vec2 clip = vec2((2.0 * tangent.x - (field.y + field.x)) / (field.y - field.x),\n"
+	"		(2.0 * tangent.y - (field.w + field.z)) / (field.w - field.z));\n"
+	"	/* at the near plane (GL's depth -1 to 1, the game's depth range 0 to\n"
+	"	1): depth all but 0, written without gl_FragDepth, which would turn\n"
+	"	off the GPU's early depth culling (LRZ) for the rest of the pass */\n"
+	"	gl_Position = vec4(clip.x, -clip.y, -0.99999, 1.0);\n"
+	"}\n";
+static const char mask_fragment_source[] =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"out vec4 colour;\n"
+	"void main()\n"
+	"{\n"
+	"	colour = vec4(0.0, 0.0, 0.0, 1.0);\n"
+	"}\n";
+
+static struct
+{
+	int tried, enabled;
+	GLuint program, vertex_arrays[2], buffers[2][2];
+	GLint field;
+	GLsizei index_count[2];
+	/* each eye's hidden area in tangent space (its share of the image is
+	logged once the field of view is known) */
+	float area[2];
+	int area_logged;
+} mask;
+
+static void mask_prepare(void)
+{
+	static float vertices[4096 * 2];
+	static unsigned int indices[4096 * 3];
+	GLint ok = 0, previous_array = 0;
+	int eye;
+
+	mask.tried = 1;
+	if (!config_boolean("vr.visibility_mask"))
+		return;
+	mask.program = glCreateProgram();
+	glAttachShader(mask.program, compile_shader(GL_VERTEX_SHADER, mask_vertex_source));
+	glAttachShader(mask.program, compile_shader(GL_FRAGMENT_SHADER, mask_fragment_source));
+	glLinkProgram(mask.program);
+	glGetProgramiv(mask.program, GL_LINK_STATUS, &ok);
+	if (!ok)
+	{
+		platform_log("vr: visibility mask program failed; drawing whole eyes");
+		return;
+	}
+	mask.field = glGetUniformLocation(mask.program, "field");
+	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_array);
+	glGenVertexArrays(2, mask.vertex_arrays);
+	for (eye = 0; eye < 2; eye++)
+	{
+		unsigned int count = host_xr_visibility_mask((unsigned int)eye, vertices, 4096, indices, 4096 * 3);
+		unsigned int index, highest = 0;
+
+		for (index = 0; index < count; index++)
+			highest = indices[index] > highest ? indices[index] : highest;
+		if (!count)
+			continue;
+		for (index = 0; index + 2 < count; index += 3)
+		{
+			const float *a = &vertices[indices[index] * 2], *b = &vertices[indices[index + 1] * 2],
+				*c = &vertices[indices[index + 2] * 2];
+
+			mask.area[eye] += 0.5f * fabsf((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+		}
+		glBindVertexArray(mask.vertex_arrays[eye]);
+		glGenBuffers(2, mask.buffers[eye]);
+		glBindBuffer(GL_ARRAY_BUFFER, mask.buffers[eye][0]);
+		glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((highest + 1) * 2 * sizeof(float)), vertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mask.buffers[eye][1]);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(count * sizeof(unsigned int)), indices, GL_STATIC_DRAW);
+		mask.index_count[eye] = (GLsizei)count;
+	}
+	glBindVertexArray((GLuint)previous_array);
+	xgpu_gl_state_invalidate();
+	mask.enabled = mask.index_count[0] > 0 || mask.index_count[1] > 0;
+	platform_log("vr: visibility mask %s (%d and %d triangles)", mask.enabled ? "on" : "unavailable",
+		(int)mask.index_count[0] / 3, (int)mask.index_count[1] / 3);
+}
+
+void vr_draw_visibility_mask(int eye)
+{
+	GLint previous_array = 0;
+
+	if (!vr.active || eye < 0 || eye > 1)
+		return;
+	if (!mask.tried)
+		mask_prepare();
+	if (!mask.enabled || !mask.index_count[eye])
+		return;
+	/* (the eye's target, and its depth, bound now: else the draw lands on
+	whatever was bound last) */
+	if (!halo_vr_bind_current_target())
+		return;
+	if (!mask.area_logged && eye == 1)
+	{
+		int side;
+
+		mask.area_logged = 1;
+		for (side = 0; side < 2; side++)
+		{
+			float image = (tanf(vr.frame.fov[side][1]) - tanf(vr.frame.fov[side][0])) *
+				(tanf(vr.frame.fov[side][2]) - tanf(vr.frame.fov[side][3]));
+
+			platform_log("vr: visibility mask, %s eye: %.1f%% of the image", side ? "right" : "left",
+				image > 0.0f ? 100.0f * mask.area[side] / image : 0.0f);
+		}
+	}
+	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previous_array);
+	glUseProgram(mask.program);
+	{
+		float field[4] = { tanf(vr.frame.fov[eye][0]), tanf(vr.frame.fov[eye][1]),
+			tanf(vr.frame.fov[eye][3]), tanf(vr.frame.fov[eye][2]) };
+
+		glUniform4fv(mask.field, 1, field);
+	}
+	glEnable(GL_DEPTH_TEST);
+	/* (less, as the scene's tests are: a test the other way would also turn
+	early culling off) */
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glDisable(GL_BLEND);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_STENCIL_TEST);
+	glDisable(GL_SCISSOR_TEST);
+	glBindVertexArray(mask.vertex_arrays[eye]);
+	glDrawElements(GL_TRIANGLES, mask.index_count[eye], GL_UNSIGNED_INT, (const void *)0);
+	glBindVertexArray((GLuint)previous_array);
+	/* (the game's renderer sets all it needs again) */
+	xgpu_gl_state_invalidate();
+}
+
 static int hud_program_ready(void)
 {
 	if (!hud_program)
@@ -1927,8 +2188,15 @@ static int copy_hud(GLuint texture)
 	unsigned int which = HALO_XR_SWAPCHAIN_QUAD;
 	int index;
 
+	double copy_start = 0.0;
+
 	if (!hud_program_ready() || (index = host_xr_acquire(which)) < 0)
 		return 0;
+	if (vr.gpu_passes)
+	{
+		glFinish();
+		copy_start = now_ms();
+	}
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 		vr.info.images[which][index], 0);
@@ -1955,6 +2223,11 @@ static int copy_hud(GLuint texture)
 		glEnable(GL_FRAMEBUFFER_SRGB_EXT);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	if (vr.gpu_passes)
+	{
+		glFinish();
+		vr.copy_ms += now_ms() - copy_start;
+	}
 	if (dumping())
 		dump_image(which, index, "vr-hud.bmp");
 	host_xr_release(which);
@@ -2306,6 +2579,8 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		gpu_ms = now_ms() - start;
 		start = now_ms();
 	}
+	if (vr.stereo)
+		gpu_stamp(_gpu_stamp_present);
 	memset(&layers, 0, sizeof(layers));
 	{
 		int mode = vr.stereo ? VR_MODE_STEREO : vr.cinema ? VR_MODE_CINEMA : VR_MODE_FLAT;
@@ -2421,7 +2696,10 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			vr.heading * 57.29578f, vr.head_yaw * 57.29578f, vr.aim_yaw * 57.29578f);
 	/* the frame's buzzes, as one a hand, at vr.haptics' strength */
 	sfvr_haptic_flush(&vr.haptic_queue, vr.haptics, play_haptic, NULL);
+	if (vr.stereo)
+		gpu_stamp(_gpu_stamp_handed);
 	frame_end(&layers);
+	gpu_stamps_collect();
 	ended = now_ms();
 	/* vr.diag_motion: a line a frame while the game draws a view (stereo or
 	a cutscene), for judging how evenly things move */
@@ -2463,8 +2741,45 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		eye_ms[0] = (float)vr.pass_ms[0];
 		eye_ms[1] = (float)vr.pass_ms[1];
 		sfvr_perf_add_frame(&vr.perf, ended * 0.001, missed, stage_ms, eye_ms, (float)gpu_ms);
+		if (vr.gpu_passes)
+		{
+			int slot;
+
+			for (slot = 0; slot < 4; slot++)
+				vr.gpu_pass_sum[slot] += vr.pass_ms[slot];
+			vr.gpu_pass_sum[4] += vr.copy_ms;
+			vr.gpu_pass_sum[5] += stage_ms[0] - vr.eye_copy_ms > 0.0f ? stage_ms[0] - vr.eye_copy_ms : 0.0f;
+			vr.gpu_pass_sum[6] += stage_ms[3];
+			vr.gpu_pass_frames++;
+			vr.copy_ms = vr.eye_copy_ms = 0.0;
+		}
 		if (sfvr_perf_poll(&vr.perf, ended * 0.001, line, sizeof(line)))
+		{
 			platform_log("%s", line);
+			if (vr.gpu_stamps && vr.gpu_stamp_frames > 0)
+			{
+				double n = vr.gpu_stamp_frames, *s = vr.gpu_stamp_sum;
+
+				platform_log("vr-gpu-stamps: before the eyes %.2f, left eye %.2f, its copy %.2f, right eye %.2f, "
+					"its copy %.2f, HUD %.2f, to the present %.2f, present to handed %.2f; frame %.2f "
+					"(GPU ms a frame, %d frames)",
+					s[0] / n, s[1] / n, s[2] / n, s[3] / n, s[4] / n, s[5] / n, s[6] / n, s[7] / n,
+					(s[0] + s[1] + s[2] + s[3] + s[4] + s[5] + s[6] + s[7]) / n, vr.gpu_stamp_frames);
+				memset(vr.gpu_stamp_sum, 0, sizeof(vr.gpu_stamp_sum));
+				vr.gpu_stamp_frames = 0;
+			}
+			if (vr.gpu_passes && vr.gpu_pass_frames > 0)
+			{
+				double n = vr.gpu_pass_frames;
+
+				platform_log("vr-gpu-passes: left eye %.2f, right eye %.2f, HUD %.2f, scope %.2f, copies %.2f, "
+					"rest of the game %.2f, ending %.2f (ms a frame, each waited for on the GPU)",
+					vr.gpu_pass_sum[0] / n, vr.gpu_pass_sum[1] / n, vr.gpu_pass_sum[2] / n, vr.gpu_pass_sum[3] / n,
+					vr.gpu_pass_sum[4] / n, vr.gpu_pass_sum[5] / n, vr.gpu_pass_sum[6] / n);
+				memset(vr.gpu_pass_sum, 0, sizeof(vr.gpu_pass_sum));
+				vr.gpu_pass_frames = 0;
+			}
+		}
 		vr.pass_ms[0] = vr.pass_ms[1] = vr.pass_ms[2] = vr.pass_ms[3] = 0.0;
 	}
 	if (vr.stereo)

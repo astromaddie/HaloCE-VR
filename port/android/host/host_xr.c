@@ -23,6 +23,7 @@ for with HALO_XR_RECENTRE_HEIGHT, and kept by a plain recentre.
 #include <GLES3/gl32.h>
 #include <jni.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -37,6 +38,7 @@ for with HALO_XR_RECENTRE_HEIGHT, and kept by a plain recentre.
 #define FRAME_CONTROLLER_EXTENSION "XR_VALVE_frame_controller_interaction"
 #define FRAME_PROFILE "/interaction_profiles/valve/frame_controller_valve"
 #define REFRESH_RATE_EXTENSION "XR_FB_display_refresh_rate"
+#define VISIBILITY_MASK_EXTENSION "XR_KHR_visibility_mask"
 
 struct swapchain
 {
@@ -85,6 +87,12 @@ static struct
 	XrSession session;
 	XrSessionState state;
 	int running, focused, exiting, frame_controller, refresh_rate_extension;
+	/* XR_KHR_visibility_mask: each eye's hidden area (what the lenses never
+	show) as triangles, in the view's tangent space (x, y at z = -1) */
+	int visibility_mask_extension;
+	float *mask_vertices[2];
+	uint32_t *mask_indices[2];
+	uint32_t mask_vertex_count[2], mask_index_count[2];
 	XrSpace local, view;
 	XrSpace grip[2], aim[2];
 	XrActionSet action_set;
@@ -254,6 +262,60 @@ static void update_recentre(XrTime time)
 		xr.recentre_position[0], xr.recentre_position[1], xr.recentre_position[2]);
 	xr.recentre_height = 0;
 	xr.recentre_not_before = 0;
+}
+
+/* ---------- the visibility mask */
+
+/* each eye's hidden triangle mesh, once the session is there; none (zero
+triangles) if the runtime has no mask */
+static void fetch_visibility_masks(void)
+{
+	PFN_xrGetVisibilityMaskKHR get = NULL;
+	int eye;
+
+	if (!xr.visibility_mask_extension ||
+		XR_FAILED(xrGetInstanceProcAddr(xr.instance, "xrGetVisibilityMaskKHR", (PFN_xrVoidFunction *)&get)) || !get)
+	{
+		return;
+	}
+	for (eye = 0; eye < 2; eye++)
+	{
+		XrVisibilityMaskKHR mask = { XR_TYPE_VISIBILITY_MASK_KHR };
+
+		if (XR_FAILED(get(xr.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, (uint32_t)eye,
+			XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &mask)) ||
+			mask.vertexCountOutput == 0 || mask.indexCountOutput == 0)
+		{
+			continue;
+		}
+		xr.mask_vertices[eye] = malloc(mask.vertexCountOutput * sizeof(XrVector2f));
+		xr.mask_indices[eye] = malloc(mask.indexCountOutput * sizeof(uint32_t));
+		if (!xr.mask_vertices[eye] || !xr.mask_indices[eye])
+			continue;
+		mask.vertexCapacityInput = mask.vertexCountOutput;
+		mask.vertices = (XrVector2f *)xr.mask_vertices[eye];
+		mask.indexCapacityInput = mask.indexCountOutput;
+		mask.indices = xr.mask_indices[eye];
+		if (XR_FAILED(get(xr.session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, (uint32_t)eye,
+			XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &mask)))
+		{
+			continue;
+		}
+		xr.mask_vertex_count[eye] = mask.vertexCountOutput;
+		xr.mask_index_count[eye] = mask.indexCountOutput;
+		host_logf(HOST_LOG_INFO, "[openxr] visibility mask, %s eye: %u triangles", eye ? "right" : "left",
+			mask.indexCountOutput / 3);
+	}
+}
+
+uint32_t host_xr_visibility_mask(uint32_t eye, float *vertices, uint32_t vertex_capacity, uint32_t *indices,
+	uint32_t index_capacity)
+{
+	if (eye > 1 || xr.mask_vertex_count[eye] > vertex_capacity || xr.mask_index_count[eye] > index_capacity)
+		return 0;
+	memcpy(vertices, xr.mask_vertices[eye], xr.mask_vertex_count[eye] * 2 * sizeof(float));
+	memcpy(indices, xr.mask_indices[eye], xr.mask_index_count[eye] * sizeof(uint32_t));
+	return xr.mask_index_count[eye];
 }
 
 /* ---------- controller actions */
@@ -680,7 +742,7 @@ static int create_instance(struct halo_xr_info *out)
 	XrSystemGetInfo system_info = { XR_TYPE_SYSTEM_GET_INFO };
 	XrSystemProperties system = { XR_TYPE_SYSTEM_PROPERTIES };
 	XrExtensionProperties available[128];
-	const char *extensions[4];
+	const char *extensions[5];
 	uint32_t count = 0, index;
 
 	for (index = 0; index < sizeof(available) / sizeof(available[0]); index++)
@@ -696,6 +758,8 @@ static int create_instance(struct halo_xr_info *out)
 			xr.frame_controller = 1;
 		if (!strcmp(available[index].extensionName, REFRESH_RATE_EXTENSION))
 			xr.refresh_rate_extension = 1;
+		if (!strcmp(available[index].extensionName, VISIBILITY_MASK_EXTENSION))
+			xr.visibility_mask_extension = 1;
 	}
 	count = 0;
 	extensions[count++] = XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME;
@@ -704,6 +768,8 @@ static int create_instance(struct halo_xr_info *out)
 		extensions[count++] = FRAME_CONTROLLER_EXTENSION;
 	if (xr.refresh_rate_extension)
 		extensions[count++] = REFRESH_RATE_EXTENSION;
+	if (xr.visibility_mask_extension)
+		extensions[count++] = VISIBILITY_MASK_EXTENSION;
 	android.applicationVM = xr.vm;
 	android.applicationActivity = xr.activity;
 	info.next = &android;
@@ -878,6 +944,7 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	{
 		return -1;
 	}
+	fetch_visibility_masks();
 	xr.actions_ready = create_actions();
 	/* (until the runtime says which controllers are held) */
 	xr.has_bumper[0] = xr.has_bumper[1] = xr.frame_controller;

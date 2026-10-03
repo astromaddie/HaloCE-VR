@@ -129,7 +129,9 @@ this list to generate the guest's entry points */
 	X(glGenQueries) \
 	X(glBeginQuery) \
 	X(glEndQuery) \
-	X(glGetQueryObjectuiv)
+	X(glGetQueryObjectuiv) \
+	X(glQueryCounterEXT) \
+	X(glGetQueryObjectui64vEXT)
 /* ANDROID_GL_FUNCTIONS_END */
 #else
 #define GL_FUNCTIONS(X) \
@@ -346,6 +348,8 @@ pointers, sees the declarations without these aliases */
 #define glBeginQuery halo_glBeginQuery
 #define glEndQuery halo_glEndQuery
 #define glGetQueryObjectuiv halo_glGetQueryObjectuiv
+#define glQueryCounterEXT halo_glQueryCounterEXT
+#define glGetQueryObjectui64vEXT halo_glGetQueryObjectui64vEXT
 #else
 #define glGetString halo_glGetString
 #define glGetIntegerv halo_glGetIntegerv

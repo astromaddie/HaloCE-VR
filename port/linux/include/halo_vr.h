@@ -104,6 +104,8 @@ int vr_render_first_person_arms_reach(void);
 /* the player's own body (vr.body): whether an eye's pass draws this unit,
 and its bones' matrices (a copy) made the body's (render_objects.c) */
 boolean vr_render_body_wanted(long object_index);
+/* port/linux/src/vr_frame.c: the eye's hidden area, drawn first in its pass */
+void vr_draw_visibility_mask(int eye);
 void vr_render_body_nodes(long object_index, real_matrix4x3 *matrices, short node_count);
 void halo_vr_two_sided(int two_sided);
 /* 1 in a stereo frame, whose eyes see the world unmagnified (a zoom shows

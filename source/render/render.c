@@ -349,6 +349,12 @@ static void render_window(
 	player_effect_get_screen_flash(local_player_index, &parameters.screen_flash);
 	rasterizer_window_begin(&parameters);
 #ifdef HALO_VR
+	/* an eye's hidden area masked before anything is drawn (the window's
+	target, its depth too, is cleared by now) */
+	if (VR_RENDER_EYE())
+		vr_draw_visibility_mask(vr_render_pass);
+#endif
+#ifdef HALO_VR
 	/* the headset's HUD pass: the HUD alone, on a transparent ground */
 	if (VR_RENDER_HUD())
 	{

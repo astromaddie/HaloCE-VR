@@ -3929,6 +3929,24 @@ void halo_vr_clear_transparent(void)
 {
 	D3DDevice_Clear(0, NULL, D3DCLEAR_TARGET, 0x00000000, 1.0f, 0);
 }
+
+int halo_vr_bind_current_target(void)
+{
+	BOOL has_depth = FALSE;
+	GLint viewport[4];
+
+	/* (the device binds its targets and viewport lazily, at its next draw:
+	a draw of the headset's own needs them bound now) */
+	if (!bind_targets(&has_depth))
+		return 0;
+	viewport[0] = target_pixel((float)device.viewport.X, 0);
+	viewport[1] = target_pixel((float)device.viewport.Y, 1);
+	viewport[2] = target_pixel((float)(device.viewport.X + device.viewport.Width), 0) - viewport[0];
+	viewport[3] = target_pixel((float)(device.viewport.Y + device.viewport.Height), 1) - viewport[1];
+	memcpy(gl_state.viewport, viewport, sizeof(viewport));
+	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+	return has_depth ? 1 : 0;
+}
 #endif
 
 HRESULT WINAPI D3DDevice_PersistDisplay(void)

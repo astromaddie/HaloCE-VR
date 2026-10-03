@@ -41,6 +41,9 @@ void vr_request_exit(void);
 /* the headset's controllers as an Xbox pad: 1 with their state when the
 session has input focus */
 int vr_controller(unsigned int *buttons, float trigger[2], float thumb[4]);
+/* the eye's hidden area (what the lenses never show) at the nearest depth,
+first in its pass: the scene is not shaded there (vr.visibility_mask) */
+void vr_draw_visibility_mask(int eye);
 
 /* ---------- stereo (port/linux/game/vr_render.c)
 

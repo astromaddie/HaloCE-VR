@@ -10,3 +10,4 @@ host_xr_recenter
 host_xr_set_refresh_rate
 host_xr_haptic
 host_xr_request_exit
+host_xr_visibility_mask
