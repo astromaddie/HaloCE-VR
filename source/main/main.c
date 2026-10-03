@@ -2192,6 +2192,16 @@ static void main_update_time_unthrottled(
 			(double)frequency.QuadPart);
 	}
 	previous_counter = counter;
+#ifdef HALO_VR
+	{
+		double display_seconds;
+
+		/* in the headset, the step between the frames' display times
+		(port/linux/src/vr_frame.c) */
+		if (vr_frame_seconds(&display_seconds))
+			seconds_elapsed = (real)display_seconds;
+	}
+#endif
 
 	if (main_globals.movie)
 	{

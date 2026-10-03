@@ -19,6 +19,10 @@ eye only.
 
 #ifdef HALO_VR
 
+/* the game clock's step this pass of the main loop, from the headset's
+display times (main_update_time_unthrottled); 0 to time it as usual */
+int vr_frame_seconds(double *seconds);
+
 struct render_window;
 struct render_camera;
 union real_rectangle2d;

@@ -155,6 +155,9 @@ static struct
 	double frame_start, pass_start, pass_ms[4];
 	sfvr_perf perf;
 	long long last_display_time;
+	/* the display time of the frame the game clock last stepped to
+	(vr_frame_seconds); 0 none */
+	long long clock_display_time;
 } vr;
 
 #include <time.h>
@@ -801,6 +804,32 @@ static int frame_begin(void)
 	layout_controls();
 	update_gestures();
 	vr.frame_start = now_ms();
+	return 1;
+}
+
+/* The game clock's step for this pass of the main loop: the runtime's
+frame is begun here, at the top of the loop (xrWaitFrame paces the loop
+from here, before the game ticks and draws), and the step is from the last
+frame's display time to this one's. The loop's own measure (the
+performance counter) also counts how long the game and the drawing took,
+which wander by milliseconds from frame to frame: what moves steadily
+(scripted cameras, flying vehicles) was drawn at uneven places between the
+ticks, and judders. Display times step by whole periods. 0 when there is
+no runtime frame (the caller then times the loop itself). */
+int vr_frame_seconds(double *seconds)
+{
+	long long previous = vr.clock_display_time;
+
+	if (!vr.active || !frame_begin())
+	{
+		vr.clock_display_time = 0;
+		return 0;
+	}
+	vr.clock_display_time = vr.frame.predicted_display_time;
+	/* (a pass of the loop that presented nothing has the same frame) */
+	if (!previous || vr.clock_display_time <= previous)
+		return 0;
+	*seconds = (double)(vr.clock_display_time - previous) * 1e-9;
 	return 1;
 }
 
