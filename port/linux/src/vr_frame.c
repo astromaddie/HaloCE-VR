@@ -837,8 +837,11 @@ void vr_pass_mark(int pass, int end)
 {
 	double now;
 
-	/* the scope's pass (5) is timed in the fourth slot */
-	if (pass == 5)
+	/* a cutscene's eyes (3, 4) are timed as the eyes, the scope's pass (5)
+	in the fourth slot */
+	if (pass == 3 || pass == 4)
+		pass -= 3;
+	else if (pass == 5)
 		pass = 3;
 	if (pass < 0 || pass > 3)
 		return;
