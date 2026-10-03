@@ -1522,7 +1522,10 @@ void vr_set_reticle(float distance_units)
 	vr.reticle_distance = distance_units > 0.0f ? distance_units / vr.units_per_metre : 0.0f;
 }
 
-/* a dot with a dark rim, drawn each frame into the reticle's image */
+/* a dot with a dark rim, drawn once into the reticle's image: a layer
+shows its swapchain's last released image, and each acquire, wait and
+release costs SteamVR's GL binding a context switch (three, and a flush
+in Zink each, about 0.5 ms a frame) */
 static void draw_reticle(void)
 {
 	static const struct { int size; float colour[4]; } rings[] =
@@ -1531,12 +1534,16 @@ static void draw_reticle(void)
 		{ 20, { 0.0f, 0.0f, 0.0f, 0.55f } },
 		{ 12, { 0.85f, 0.95f, 1.0f, 0.95f } },
 	};
-	int index = host_xr_acquire(HALO_XR_SWAPCHAIN_RETICLE);
-	int size = (int)vr.info.width[HALO_XR_SWAPCHAIN_RETICLE];
+	static int drawn;
+	int index, size = (int)vr.info.width[HALO_XR_SWAPCHAIN_RETICLE];
 	unsigned int ring;
 
+	if (drawn)
+		return;
+	index = host_xr_acquire(HALO_XR_SWAPCHAIN_RETICLE);
 	if (index < 0)
 		return;
+	drawn = 1;
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 		vr.info.images[HALO_XR_SWAPCHAIN_RETICLE][index], 0);
