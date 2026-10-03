@@ -446,10 +446,33 @@ static void clear_swapchain(unsigned int which, float red, float green, float bl
 	host_xr_release(which);
 }
 
+/* what a frame shows (vr.mode) */
+enum
+{
+	VR_MODE_FLAT,
+	VR_MODE_STEREO,
+	VR_MODE_CINEMA,
+};
+
+/* a screen in the headset (a cutscene's 3D screen, the flat screen of the
+menus and loading) is drawn at the quad's resolution, 1280x960: it covers
+some 60 degrees of view, which the display shows in about that many pixels,
+and drawn at the eyes' (2592 square at vr.resolution_scale 1.5) its pixels
+cost a cutscene its frame rate */
+#define VR_SCREEN_SCALE 2.0f
+
 int vr_screen_scale(float scale[2])
 {
 	if (!vr.active)
 		return 0;
+	/* (the mode of the frame last shown: the scale is taken between frames,
+	so a change of mode draws one frame at the other's, under the fade) */
+	if (vr.mode == VR_MODE_CINEMA || vr.mode == VR_MODE_FLAT)
+	{
+		scale[0] = scale[1] = (float)vr.eye_size / 640.0f < VR_SCREEN_SCALE ? (float)vr.eye_size / 640.0f :
+			VR_SCREEN_SCALE;
+		return 1;
+	}
 	/* the eye's square from the 640x480 screen: the frustum takes the
 	aspect back out (vr_camera.c) */
 	scale[0] = (float)vr.eye_size / 640.0f;
@@ -2234,13 +2257,6 @@ static int copy_hud(GLuint texture)
 	return 1;
 }
 
-/* what a frame shows (vr.mode) */
-enum
-{
-	VR_MODE_FLAT,
-	VR_MODE_STEREO,
-	VR_MODE_CINEMA,
-};
 
 /* ---------- the menus' laser pointer */
 
