@@ -334,6 +334,26 @@ void vr_initialize(void)
 	/* the swapchains are sRGB and the game's picture is gamma-encoded
 	already: written without conversion, the compositor shows it as it is */
 	vr.srgb_write_control = host_gl_has_extension("GL_EXT_sRGB_write_control");
+	/* what the driver offers for cheaper eyes (foveation, shading rate,
+	both eyes in one pass), logged once */
+	{
+		static const char *const names[] =
+		{
+			"GL_EXT_fragment_shading_rate", "GL_EXT_fragment_shading_rate_attachment",
+			"GL_EXT_fragment_shading_rate_primitive", "GL_QCOM_texture_foveated",
+			"GL_QCOM_texture_foveated2", "GL_QCOM_framebuffer_foveated", "GL_OVR_multiview",
+			"GL_OVR_multiview2", "GL_EXT_multisampled_render_to_texture", "GL_EXT_clip_control",
+		};
+		char line[512];
+		size_t used = 0, index;
+
+		for (index = 0; index < sizeof(names) / sizeof(names[0]) && used < sizeof(line); index++)
+		{
+			used += (size_t)snprintf(line + used, sizeof(line) - used, "%s%s %s", index ? ", " : "",
+				names[index] + 3, host_gl_has_extension(names[index]) ? "yes" : "no");
+		}
+		platform_log("vr: GL for cheaper eyes: %s", line);
+	}
 	vr.screen_distance = (float)config_real("vr.screen_distance");
 	vr.screen_width = (float)config_real("vr.screen_width");
 	vr.stereo_enabled = config_boolean("vr.stereo");
