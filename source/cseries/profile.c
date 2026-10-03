@@ -1189,9 +1189,15 @@ void profile_render_end(
 	return;
 }
 
+/* The native ports read the clock for the texture timer only while the
+profile graph (its one reader) is shown: it is started and ended around
+every texture set, thousands of times a frame, and on Android each read
+is a call through the host (0.3 ms of the game thread a frame in the headset). */
 void profile_texture_start(
 	void)
 {
+	if (!profile_graph)
+		return;
 	profile_timesection_begin_now(&profile_globals.current_frame.texture);
 
 	return;
@@ -1200,6 +1206,8 @@ void profile_texture_start(
 void profile_texture_end(
 	void)
 {
+	if (!profile_graph)
+		return;
 	profile_timesection_end_now(&profile_globals.current_frame.texture);
 
 	return;
