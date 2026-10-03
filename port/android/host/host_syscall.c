@@ -207,7 +207,12 @@ long long host_syscall(long long number, long long a, long long b, long long c,
 	case SYS_clock_getres:
 	{
 		struct timespec value;
-		long result = syscall(number, (clockid_t)a, &value);
+		/* (the C library's clock_gettime reads the clock in the vDSO, without
+		entering the kernel: the game reads it many times a frame, and a
+		raw system call costs a trip through the kernel and Lepton's seccomp
+		filter each time) */
+		long result = number == SYS_clock_gettime ? clock_gettime((clockid_t)a, &value) :
+			syscall(number, (clockid_t)a, &value);
 
 		if (result == 0)
 			timespec_out((uint64_t)b, &value);
