@@ -427,7 +427,7 @@ static int create_actions(void)
 	ok &= create_action(_action_y, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y, Xbox layout (switch weapons)", 0);
 	ok &= create_action(_action_white, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_white", "Left bumper, Xbox layout (flashlight)", 0);
 	ok &= create_action(_action_black, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_black", "Right bumper, Xbox layout (switch grenades)", 0);
-	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu (pause; Index: a firm press of a trackpad)", 0);
+	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu, Xbox layout (pause; Index: a firm press of a trackpad)", 0);
 	ok &= create_action(_action_back, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_back", "View (back; Xbox layout: held 1 s recentres, 3 s also the standing height)", 0);
 	ok &= create_action(_action_left_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb", "Left stick click, Xbox layout (crouch)", 0);
 	ok &= create_action(_action_right_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb", "Right stick click, Xbox layout (zoom)", 0);
