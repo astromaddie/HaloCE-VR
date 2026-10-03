@@ -80,6 +80,9 @@ static struct
 	the gun the line from the right to the left (vr.two_handed) */
 	struct halo_xr_pose aim_pose;
 	int two_handed_enabled, two_handed;
+	/* with both hands on: the gun's turn from the line between them, as
+	it was when the second hand took hold (compute_aim_pose) */
+	float two_handed_offset[4];
 	/* the controls (vr.controls): the VR layout or the Xbox pad's; this
 	frame's pad as the game is to see it; the View button's hold (seconds,
 	for a recentre) and the zoom trigger's state; vr.move_relative */
@@ -391,6 +394,7 @@ static float wrap_angle(float angle);
 static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
 static void look_rotation(const float forward[3], const float up[3], float out[4]);
+static void multiply(const float a[4], const float b[4], float out[4]);
 
 /* The system layer (the same in every port; the timing is sfvr_view's): View,
 the left controller's (Touch and Index: its upper face button), goes back on a
@@ -1235,17 +1239,20 @@ static void look_rotation(const float forward[3], const float up[3], float out[4
 }
 
 /* the aim this frame: the right controller's, unless the left hand holds
-the gun ahead of it (between 12 and 60 cm along the right hand's aim and
-within 35 degrees of it), when the gun points from the right hand to the
-left, as a rifle held in both does */
+the gun (gripped, or in "auto" ahead of it: between 12 and 60 cm along the
+right hand's aim and within 35 degrees of it), when the gun turns as the
+line from the right hand to the left does, as a rifle held in both does.
+That line is not the barrel's (the hands are at different heights, the
+grips in the palms), so the gun keeps the turn from it it had as the
+second hand took hold, rather than jumping onto it */
 static void steady_aim(void);
 
 static void compute_aim_pose(void)
 {
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f }, xr_up[3] = { 0.0f, 1.0f, 0.0f };
-	float aim[3], between[3], length, up[3];
+	float aim[3], between[3], length, up[3], line[4];
 
-	int w = vr.weapon_hand, o = 1 - vr.weapon_hand;
+	int w = vr.weapon_hand, o = 1 - vr.weapon_hand, was_two_handed = vr.two_handed;
 
 	vr.aim_pose = vr.frame.aim[w];
 	vr.two_handed = 0;
@@ -1272,8 +1279,30 @@ static void compute_aim_pose(void)
 	between[1] /= length;
 	between[2] /= length;
 	rotate(vr.frame.aim[w].orientation, xr_up, up);
-	look_rotation(between, up, vr.aim_pose.orientation);
+	look_rotation(between, up, line);
+	if (!was_two_handed)
+	{
+		/* taking hold: the gun's turn from the line, kept from now on */
+		float inverse[4] = { -line[0], -line[1], -line[2], line[3] };
+
+		multiply(inverse, vr.frame.aim[w].orientation, vr.two_handed_offset);
+	}
+	multiply(line, vr.two_handed_offset, vr.aim_pose.orientation);
 	vr.two_handed = 1;
+}
+
+/* a * b for quaternions (x, y, z, w): b's turn, then a's */
+static void multiply(const float a[4], const float b[4], float out[4])
+{
+	float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+	float y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+	float z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+	float w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+
+	out[0] = x;
+	out[1] = y;
+	out[2] = z;
+	out[3] = w;
 }
 
 static void update_aim_pose(void)
