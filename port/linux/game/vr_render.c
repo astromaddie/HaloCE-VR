@@ -1205,13 +1205,18 @@ static void vr_frame_of(real_vector3d const *first, real_vector3d const *second,
 	frame[2][0] = a.k; frame[2][1] = b.k; frame[2][2] = c.k;
 }
 
-/* The free hand held as the controller is: its length along the grip's
-forward, its palm the way the player's faces (OpenXR's grip +x points to
-the player's right for either hand: out of the left palm, into the back of
-the right). The whole hand turns about the wrist, its fingers with it. */
+/* The free hand, relaxed: its length mostly along the forearm's line (a
+straight wrist; following the controller's forward bent it limp), turned
+a little toward the grip's forward, and rolled as the controller is, its
+palm the way the player's faces (OpenXR's grip +x points to the player's
+right for either hand: out of the left palm, into the back of the right).
+The whole hand turns about the wrist, its fingers with it. */
+#define VR_FREE_HAND_FOLLOWS_GRIP 0.25f
+
 static void vr_orient_free_hand(
 	struct animation_graph *graph,
 	real_matrix4x3 *matrices,
+	short forearm,
 	short wrist,
 	char const *side,
 	boolean mirrored,
@@ -1220,7 +1225,7 @@ static void vr_orient_free_hand(
 	real_vector3d const *hand_up)
 {
 	short joints[NUMBER_OF_VR_FINGERS][3];
-	real_vector3d along, palm, right, palm_wanted;
+	real_vector3d along, palm, right, palm_wanted, arm, along_wanted, grip_forward = *hand_forward;
 	real model[3][3], wanted[3][3], rotation[3][3];
 	real_point3d pivot = matrices[wrist].position;
 	int row, column;
@@ -1242,8 +1247,19 @@ static void vr_orient_free_hand(
 		palm_wanted.j = -palm_wanted.j;
 		palm_wanted.k = -palm_wanted.k;
 	}
+	vr_point_minus(&matrices[wrist].position, &matrices[forearm].position, &arm);
+	if (vr_length(&arm) < 1e-6f)
+		return;
+	normalize3d(&arm);
+	normalize3d(&grip_forward);
+	along_wanted.i = arm.i * (1.0f - VR_FREE_HAND_FOLLOWS_GRIP) + grip_forward.i * VR_FREE_HAND_FOLLOWS_GRIP;
+	along_wanted.j = arm.j * (1.0f - VR_FREE_HAND_FOLLOWS_GRIP) + grip_forward.j * VR_FREE_HAND_FOLLOWS_GRIP;
+	along_wanted.k = arm.k * (1.0f - VR_FREE_HAND_FOLLOWS_GRIP) + grip_forward.k * VR_FREE_HAND_FOLLOWS_GRIP;
+	if (vr_length(&along_wanted) < 1e-6f)
+		return;
+	normalize3d(&along_wanted);
 	vr_frame_of(&along, &palm, model);
-	vr_frame_of(hand_forward, &palm_wanted, wanted);
+	vr_frame_of(&along_wanted, &palm_wanted, wanted);
 	/* wanted * model^T */
 	for (row = 0; row < 3; row++)
 	{
@@ -1272,10 +1288,13 @@ static void vr_pose_free_hand(
 	boolean mirrored,
 	int controller)
 {
-	/* degrees at the low and mid joints: at rest, and in a fist (the thumb
-	tucked across) */
-	static const real relaxed[NUMBER_OF_VR_FINGERS][2] = { { 10, 12 }, { 18, 24 }, { 22, 28 }, { 26, 30 }, { 30, 32 } };
-	static const real fist[NUMBER_OF_VR_FINGERS][2] = { { 50, 55 }, { 75, 85 }, { 80, 90 }, { 80, 90 }, { 80, 90 } };
+	/* degrees each joint is bent toward the palm (from the bone before it:
+	for a low joint the hand's length), at rest and in a fist; the fingers
+	are set to these, opened from the animation's half-closed grip. The
+	thumb, whose base points aside, is bent by these on top of the
+	animation's instead */
+	static const real relaxed[NUMBER_OF_VR_FINGERS][2] = { { 5, 8 }, { 14, 18 }, { 16, 22 }, { 20, 26 }, { 24, 30 } };
+	static const real fist[NUMBER_OF_VR_FINGERS][2] = { { 40, 45 }, { 80, 90 }, { 85, 95 }, { 85, 95 }, { 85, 95 } };
 	short joints[NUMBER_OF_VR_FINGERS][3];
 	real_vector3d along, palm;
 	float grip, trigger;
@@ -1293,10 +1312,34 @@ static void vr_pose_free_hand(
 
 		for (joint = 0; joint < 2; joint++)
 		{
-			real degrees = relaxed[finger][joint] + (fist[finger][joint] - relaxed[finger][joint]) * closed;
+			real wanted = (relaxed[finger][joint] + (fist[finger][joint] - relaxed[finger][joint]) * closed) *
+				(real)(3.14159265 / 180.0);
+			real bend = wanted;
 
-			vr_bend_joint(graph, matrices, joints[finger][joint], joints[finger][joint + 1], &palm,
-				degrees * (real)(3.14159265 / 180.0));
+			if (finger != _vr_finger_thumb)
+			{
+				/* the joint's bend now: its bone against the one before,
+				toward the palm */
+				real_vector3d before, bone;
+				short previous = joint ? joints[finger][0] : NONE;
+
+				if (previous == NONE)
+					before = along;
+				else
+					vr_point_minus(&matrices[joints[finger][1]].position, &matrices[previous].position, &before);
+				vr_point_minus(&matrices[joints[finger][joint + 1]].position, &matrices[joints[finger][joint]].position, &bone);
+				if (vr_length(&before) > 1e-6f && vr_length(&bone) > 1e-6f)
+				{
+					real ahead, toward;
+
+					normalize3d(&before);
+					normalize3d(&bone);
+					ahead = bone.i * before.i + bone.j * before.j + bone.k * before.k;
+					toward = bone.i * palm.i + bone.j * palm.j + bone.k * palm.k;
+					bend = wanted - (real)atan2(toward, ahead);
+				}
+			}
+			vr_bend_joint(graph, matrices, joints[finger][joint], joints[finger][joint + 1], &palm, bend);
 		}
 	}
 }
@@ -1640,8 +1683,8 @@ void vr_render_first_person_ik(
 				boolean mirrored = vr_render_first_person_mirrored();
 				char const *hand_side = side ? " r " : " l ";
 
-				vr_orient_free_hand(graph, matrices, chain[_vr_arm_hand], hand_side, mirrored, controller,
-					&free_forward, &free_up);
+				vr_orient_free_hand(graph, matrices, chain[_vr_arm_fore], chain[_vr_arm_hand], hand_side, mirrored,
+					controller, &free_forward, &free_up);
 				vr_pose_free_hand(graph, matrices, chain[_vr_arm_hand], hand_side, mirrored, controller);
 			}
 		}
@@ -1683,6 +1726,7 @@ far back, looking down shows the floor ahead of the feet. With the legs
 alone nothing is near the eyes. */
 static const real vr_body_back[3] = { 0.0f, 0.05f, 0.10f };
 static const real vr_body_down[3] = { 0.0f, 0.0f, 0.15f };
+#define VR_BODY_BACK_LOOKING_DOWN 0.25f
 
 static int vr_render_body_setting(
 	void)
@@ -1721,8 +1765,9 @@ boolean vr_render_body_wanted(
 	return object->object.parent_object_index == NONE;
 }
 
-/* the node, or one above it, is the head, the neck or an upper arm, or
-for the legs alone the spine (all above the hips) */
+/* the node, or one above it, is the head, the neck, a clavicle (the
+shoulder: with the upper arm gone its triangles stretched into shards) or
+an upper arm, or for the legs alone the spine (all above the hips) */
 static boolean vr_body_node_hidden(
 	struct model *model,
 	short node_index)
@@ -1735,8 +1780,8 @@ static boolean vr_body_node_hidden(
 	{
 		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
 
-		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "upperarm") ||
-			(legs && strstr(node->name, "spine")))
+		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "clavicle") ||
+			strstr(node->name, "upperarm") || (legs && strstr(node->name, "spine")))
 			return TRUE;
 		node_index = node->parent_node_index;
 	}
@@ -1754,7 +1799,7 @@ void vr_render_body_nodes(
 	struct model *model = model_index != NONE ? model_definition_get(model_index) : NULL;
 	real units = vr_units_per_metre();
 	real_vector3d body_forward, head_forward, shift;
-	real rotation[3][3], c, s;
+	real rotation[3][3], c, s, back;
 	real_point3d pivot;
 	short index;
 
@@ -1771,11 +1816,22 @@ void vr_render_body_nodes(
 				vr_body_node_hidden(model, index) ? " (hidden)" : "");
 		}
 	}
-	/* no head, neck or arms */
+	/* no head, neck or arms: each hidden bone shrunk to nothing at the
+	nearest kept one above it (inside the chest), so that the collar and the
+	shoulders fold in rather than stretch out to where the neck and arms
+	were (spikes across the view) */
 	for (index = 0; index < node_count && index < model->nodes.count; index++)
 	{
 		if (vr_body_node_hidden(model, index))
+		{
+			short kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->parent_node_index;
+
+			while (kept >= 0 && kept < node_count && vr_body_node_hidden(model, kept))
+				kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, kept, struct model_node)->parent_node_index;
+			if (kept >= 0 && kept < node_count)
+				matrices[index].position = matrices[kept].position;
 			matrices[index].scale = 0.0f;
+		}
 	}
 	/* under the head: moved across by the head's offset from the game's
 	camera, turned from the unit's facing to the head's yaw about the head,
@@ -1797,14 +1853,21 @@ void vr_render_body_nodes(
 	rotation[1][1] = c;
 	rotation[2][2] = 1.0f;
 	pivot = vr_render.head_camera.position;
+	/* looking down, the body goes back with it (up to VR_BODY_BACK_LOOKING_DOWN
+	more, looking straight down): the eyes meet the chest, not the collar */
+	{
+		real down = -vr_render.head_camera.forward.k;
+
+		back = vr_body_back[vr_render_body_setting()] + (down > 0.0f ? down : 0.0f) * VR_BODY_BACK_LOOKING_DOWN;
+	}
 	for (index = 0; index < node_count; index++)
 	{
 		real_point3d to;
 
 		matrices[index].position.x += shift.i;
 		matrices[index].position.y += shift.j;
-		to.x = pivot.x - head_forward.i * vr_body_back[vr_render_body_setting()] * units;
-		to.y = pivot.y - head_forward.j * vr_body_back[vr_render_body_setting()] * units;
+		to.x = pivot.x - head_forward.i * back * units;
+		to.y = pivot.y - head_forward.j * back * units;
 		to.z = pivot.z - vr_body_down[vr_render_body_setting()] * units;
 		vr_carry(&matrices[index], &pivot, &to, rotation);
 	}
