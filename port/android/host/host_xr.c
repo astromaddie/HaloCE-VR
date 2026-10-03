@@ -43,6 +43,10 @@ struct swapchain
 	uint32_t width, height, count;
 	uint32_t images[HALO_XR_MAXIMUM_IMAGES];
 	int acquired;
+	/* a part of the atlas (the eyes and the quad): at (x, y) in its
+	images, acquired and released with it */
+	int in_atlas;
+	uint32_t x, y;
 };
 
 enum
@@ -100,6 +104,13 @@ static struct
 	not, and a grip with a stick click stands for it (sync_input) */
 	int has_bumper[2];
 	struct swapchain swapchains[HALO_XR_SWAPCHAIN_COUNT];
+	/* The eyes and the quad (the HUD, the flat screen) side by side in one
+	swapchain: SteamVR's GL binding makes its own context current for each
+	acquire, wait and release (and the game's again after), a flush and
+	fences in Zink each time, so one image a frame instead of three saves
+	six of those. Its image acquired this frame (atlas_index), if it is. */
+	struct swapchain atlas;
+	int atlas_index;
 	int64_t color_format;
 	XrFrameState frame_state;
 	int frame_begun;
@@ -818,7 +829,7 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 {
 	XrViewConfigurationView views[2] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
 	uint32_t view_count = 0;
-	int which, index;
+	int which;
 
 	memset(out, 0, sizeof(*out));
 	if (xr.failed)
@@ -833,13 +844,36 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	{
 		return -1;
 	}
-	for (index = 0; index < 2; index++)
 	{
-		if (!create_swapchain(index, views[index].recommendedImageRectWidth, views[index].recommendedImageRectHeight))
+		/* the atlas: left eye, right eye, quad, from the left */
+		uint32_t widths[3], heights[3], x = 0, height = 0;
+		int part;
+
+		widths[0] = views[0].recommendedImageRectWidth;
+		heights[0] = views[0].recommendedImageRectHeight;
+		widths[1] = views[1].recommendedImageRectWidth;
+		heights[1] = views[1].recommendedImageRectHeight;
+		widths[2] = quad_width;
+		heights[2] = quad_height;
+		for (part = 0; part < 3; part++)
+			height = heights[part] > height ? heights[part] : height;
+		if (!create_swapchain(HALO_XR_SWAPCHAIN_LEFT, widths[0] + widths[1] + widths[2], height))
 			return -1;
+		xr.atlas = xr.swapchains[HALO_XR_SWAPCHAIN_LEFT];
+		for (part = 0; part < 3; part++)
+		{
+			struct swapchain *swapchain = &xr.swapchains[part];
+
+			*swapchain = xr.atlas;
+			swapchain->in_atlas = 1;
+			swapchain->x = x;
+			swapchain->y = 0;
+			swapchain->width = widths[part];
+			swapchain->height = heights[part];
+			x += widths[part];
+		}
 	}
-	if (!create_swapchain(HALO_XR_SWAPCHAIN_QUAD, quad_width, quad_height) ||
-		!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64) ||
+	if (!create_swapchain(HALO_XR_SWAPCHAIN_RETICLE, 64, 64) ||
 		!create_swapchain(HALO_XR_SWAPCHAIN_FADE, 16, 16) ||
 		!create_swapchain(HALO_XR_SWAPCHAIN_SCOPE, 768, 768))
 	{
@@ -870,6 +904,8 @@ describe:
 		out->height[which] = xr.swapchains[which].height;
 		out->image_count[which] = xr.swapchains[which].count;
 		memcpy(out->images[which], xr.swapchains[which].images, sizeof(out->images[which]));
+		out->x[which] = xr.swapchains[which].x;
+		out->y[which] = xr.swapchains[which].y;
 	}
 	return 0;
 }
@@ -1103,7 +1139,14 @@ int host_xr_acquire(uint32_t which)
 	if (which >= HALO_XR_SWAPCHAIN_COUNT || !xr.frame_begun)
 		return -1;
 	swapchain = &xr.swapchains[which];
-	if (swapchain->acquired)
+	if (swapchain->in_atlas)
+	{
+		/* the atlas's image of this frame, whichever part comes first */
+		if (xr.atlas.acquired)
+			return xr.atlas_index;
+		swapchain = &xr.atlas;
+	}
+	else if (swapchain->acquired)
 		return -1;
 	if (!check(xrAcquireSwapchainImage(swapchain->handle, &acquire, &index), "xrAcquireSwapchainImage"))
 		return -1;
@@ -1111,6 +1154,8 @@ int host_xr_acquire(uint32_t which)
 	if (!check(xrWaitSwapchainImage(swapchain->handle, &wait), "xrWaitSwapchainImage"))
 		return -1;
 	swapchain->acquired = 1;
+	if (swapchain == &xr.atlas)
+		xr.atlas_index = (int)index;
 	return (int)index;
 }
 
@@ -1118,10 +1163,21 @@ void host_xr_release(uint32_t which)
 {
 	XrSwapchainImageReleaseInfo release = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 
-	if (which >= HALO_XR_SWAPCHAIN_COUNT || !xr.swapchains[which].acquired)
+	/* (the atlas's parts go with it, as the frame ends) */
+	if (which >= HALO_XR_SWAPCHAIN_COUNT || xr.swapchains[which].in_atlas || !xr.swapchains[which].acquired)
 		return;
 	check(xrReleaseSwapchainImage(xr.swapchains[which].handle, &release), "xrReleaseSwapchainImage");
 	xr.swapchains[which].acquired = 0;
+}
+
+static void release_atlas(void)
+{
+	XrSwapchainImageReleaseInfo release = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+
+	if (!xr.atlas.acquired)
+		return;
+	check(xrReleaseSwapchainImage(xr.atlas.handle, &release), "xrReleaseSwapchainImage");
+	xr.atlas.acquired = 0;
 }
 
 /* Ends the frame begun by host_xr_begin_frame with the layers the guest
@@ -1145,6 +1201,7 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		return;
 	for (which = 0; which < HALO_XR_SWAPCHAIN_COUNT; which++)
 		host_xr_release((uint32_t)which);
+	release_atlas();
 	if (layers && (layers->flags & HALO_XR_LAYER_PROJECTION) && xr.views_valid && xr.frame_state.shouldRender)
 	{
 		int eye;
@@ -1156,6 +1213,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 			views[eye].pose = xr.views[eye].pose;
 			views[eye].fov = xr.views[eye].fov;
 			views[eye].subImage.swapchain = xr.swapchains[eye].handle;
+			views[eye].subImage.imageRect.offset.x = (int32_t)xr.swapchains[eye].x;
+			views[eye].subImage.imageRect.offset.y = (int32_t)xr.swapchains[eye].y;
 			views[eye].subImage.imageRect.extent.width = (int32_t)xr.swapchains[eye].width;
 			views[eye].subImage.imageRect.extent.height = (int32_t)xr.swapchains[eye].height;
 		}
@@ -1175,6 +1234,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 
 			screen[eye].eyeVisibility = eye ? XR_EYE_VISIBILITY_RIGHT : XR_EYE_VISIBILITY_LEFT;
 			screen[eye].subImage.swapchain = swapchain->handle;
+			screen[eye].subImage.imageRect.offset.x = (int32_t)swapchain->x;
+			screen[eye].subImage.imageRect.offset.y = (int32_t)swapchain->y;
 			screen[eye].subImage.imageRect.extent.width = (int32_t)swapchain->width;
 			screen[eye].subImage.imageRect.extent.height = (int32_t)swapchain->height;
 			screen[eye].size.width = layers->quad_size[0];
@@ -1208,6 +1269,8 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 			quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
 		quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 		quad.subImage.swapchain = swapchain->handle;
+		quad.subImage.imageRect.offset.x = (int32_t)swapchain->x;
+		quad.subImage.imageRect.offset.y = (int32_t)swapchain->y;
 		quad.subImage.imageRect.extent.width = (int32_t)swapchain->width;
 		quad.subImage.imageRect.extent.height = (int32_t)swapchain->height;
 		quad.size.width = layers->quad_size[0];

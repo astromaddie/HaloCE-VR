@@ -95,6 +95,10 @@ struct halo_xr_info
 	uint32_t images[HALO_XR_SWAPCHAIN_COUNT][HALO_XR_MAXIMUM_IMAGES]; /* GL texture names */
 	char runtime[64];
 	char system[64];
+	/* where in its images each swapchain's width x height is (pixels from
+	the bottom left): the eyes and the quad share one atlas (host_xr.c) */
+	uint32_t x[HALO_XR_SWAPCHAIN_COUNT];
+	uint32_t y[HALO_XR_SWAPCHAIN_COUNT];
 };
 
 /* frame flags */
@@ -190,7 +194,8 @@ struct halo_xr_layers
 #define HALO_XR_ASSERT _Static_assert
 #endif
 HALO_XR_ASSERT(sizeof(struct halo_xr_pose) == 28, "halo_xr_pose layout");
-HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 312, "halo_xr_info layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_info) == 360, "halo_xr_info layout");
+HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_info, x) == 312, "halo_xr_info.x");
 HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 304, "halo_xr_frame layout");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, head) == 24, "halo_xr_frame.head");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, buttons) == 260, "halo_xr_frame.buttons");

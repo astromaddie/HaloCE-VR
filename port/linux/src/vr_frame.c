@@ -371,11 +371,16 @@ static void clear_swapchain(unsigned int which, float red, float green, float bl
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 		vr.info.images[which][index], 0);
-	glViewport(0, 0, (GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
-	glDisable(GL_SCISSOR_TEST);
+	/* (only its part of the atlas: halo_android_abi.h) */
+	glViewport((GLint)vr.info.x[which], (GLint)vr.info.y[which],
+		(GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
+	glEnable(GL_SCISSOR_TEST);
+	glScissor((GLint)vr.info.x[which], (GLint)vr.info.y[which],
+		(GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glClearColor(red, green, blue, alpha);
 	glClear(GL_COLOR_BUFFER_BIT);
+	glDisable(GL_SCISSOR_TEST);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	host_xr_release(which);
@@ -887,8 +892,11 @@ static int copy_to_swapchain(unsigned int which, GLuint source, int width, int h
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	if (vr.srgb_write_control)
 		glDisable(GL_FRAMEBUFFER_SRGB_EXT);
-	/* OpenXR images have row 0 at the bottom */
-	glBlitFramebuffer(0, 0, width, height, 0, (GLint)vr.info.height[which], (GLint)vr.info.width[which], 0,
+	/* OpenXR images have row 0 at the bottom; into the swapchain's part of
+	its images (the atlas's) */
+	glBlitFramebuffer(0, 0, width, height,
+		(GLint)vr.info.x[which], (GLint)(vr.info.y[which] + vr.info.height[which]),
+		(GLint)(vr.info.x[which] + vr.info.width[which]), (GLint)vr.info.y[which],
 		GL_COLOR_BUFFER_BIT, GL_LINEAR);
 	if (vr.srgb_write_control)
 		glEnable(GL_FRAMEBUFFER_SRGB_EXT);
@@ -1709,7 +1717,7 @@ static void dump_image(unsigned int which, int index, const char *name)
 		return;
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vr.info.images[which][index], 0);
-	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+	glReadPixels((GLint)vr.info.x[which], (GLint)vr.info.y[which], width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	for (pixel = 0; pixel < (unsigned int)(width * height); pixel++)
@@ -1831,7 +1839,8 @@ static int copy_hud(GLuint texture)
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, vr.framebuffer);
 	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
 		vr.info.images[which][index], 0);
-	glViewport(0, 0, (GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
+	glViewport((GLint)vr.info.x[which], (GLint)vr.info.y[which],
+		(GLsizei)vr.info.width[which], (GLsizei)vr.info.height[which]);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
 	glDisable(GL_DEPTH_TEST);

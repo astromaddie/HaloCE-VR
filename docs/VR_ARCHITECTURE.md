@@ -92,8 +92,10 @@ Ninja does not rerun Gradle when only Java sources changed (the SDL patch, for e
 **Host (64-bit, `port/android/host/host_xr.c`).** The host owns:
 - the Khronos loader, 1.1.63, fetched from Maven Central with its SHA-256 checked;
 - the instance and a GLES session on the game thread's EGL context;
-- six swapchains: left eye, right eye, a quad (the flat screen or HUD), the hand's reticle, a
-  fade to black, and the scope;
+- four swapchains. An atlas holds the left eye, the right eye and a quad (the flat screen or
+  HUD) side by side, acquired once a frame and released as it ends: SteamVR's GL binding makes
+  its own context current for every acquire, wait and release, which costs a flush in Zink each
+  time. The others are the hand's reticle (drawn once), a fade to black, and the scope;
 - controller actions for the Frame, Touch and Index profiles;
 - recentring (the origin's yaw and horizontal position, and apart from them its height, the
   standing height; see System layer);
