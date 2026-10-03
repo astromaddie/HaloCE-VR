@@ -550,6 +550,10 @@ void first_person_weapon_draw(
 					if (first_person_weapon->hands_node_remapping_table_valid &&
 						first_person_interface->hands.index!=NONE)
 					{
+#ifdef HALO_VR
+						/* the arms' open ends in view: two-sided, insides dark */
+						halo_vr_two_sided(vr_render_first_person_arms_reach());
+#endif
 						model_remap_node_matrices_to_match_animation_graph(
 							first_person_interface->hands.index,
 							model_node_matrices,
@@ -570,6 +574,9 @@ void first_person_weapon_draw(
 							first_person_weapon->weapon_index,
 							0,
 							FLAG(_render_model_first_person_bit));
+#ifdef HALO_VR
+						halo_vr_two_sided(FALSE);
+#endif
 					}
 #ifdef HALO_VR
 					halo_vr_mirror_winding(FALSE);

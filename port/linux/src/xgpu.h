@@ -104,6 +104,9 @@ struct nv2a_pixel_shader_key
 	unsigned char fog_table_mode;
 	/* inside a visibility test: count the samples that pass (Android) */
 	unsigned char count_samples;
+	/* drawn two-sided with its back faces shaded dark (the headset's
+	first-person arms, open where the model ends: halo_vr_two_sided) */
+	unsigned char back_faces_dark;
 	/* a high-res HUD meter (hud_hires.h) drawn with the meter's blend (the
 	destination kept by the source's alpha): that alpha is eased to 1 by the
 	coverage texture 0's green holds, so that the meter darkens what is

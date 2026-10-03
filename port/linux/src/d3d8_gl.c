@@ -83,6 +83,8 @@ static float screen_scale[2] = { 1.0f, 1.0f };
 #ifdef HALO_VR
 /* model triangles' winding turned over while set (halo_vr_mirror_winding) */
 static int vr_mirror_winding;
+/* models drawn two-sided, their back faces dark, while set (halo_vr_two_sided) */
+static int vr_two_sided;
 #endif
 static long ui_offset;
 #define UI_OFFSET ((GLint)ui_offset)
@@ -2470,7 +2472,13 @@ static void apply_raster_state(BOOL has_depth)
 
 	/* the cull mode names the winding to discard; FRONTFACE names the
 	front winding */
+	/* (two-sided, the front winding is still set: the shader shades the
+	back faces by it) */
+#ifdef HALO_VR
+	state_enable(&gl_state.cull_face, GL_CULL_FACE, rs[D3DRS_CULLMODE] != D3DCULL_NONE && !vr_two_sided);
+#else
 	state_enable(&gl_state.cull_face, GL_CULL_FACE, rs[D3DRS_CULLMODE] != D3DCULL_NONE);
+#endif
 	if (rs[D3DRS_CULLMODE] != D3DCULL_NONE)
 	{
 #ifdef HALO_ANDROID
@@ -2635,6 +2643,9 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_ANDROID
 	key.count_samples = device.visibility_test_active && xgpu_capabilities.atomic_counters;
+#endif
+#ifdef HALO_VR
+	key.back_faces_dark = vr_two_sided && D3D__RenderState[D3DRS_CULLMODE] != D3DCULL_NONE;
 #endif
 
 	entry = program_get(vertex_shader_get(program, immediate), fragment_shader_get(&key));
@@ -3872,6 +3883,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 void halo_vr_mirror_winding(int mirrored)
 {
 	vr_mirror_winding = mirrored;
+}
+
+void halo_vr_two_sided(int two_sided)
+{
+	vr_two_sided = two_sided;
 }
 
 /* ---------- the headset's stereo frames (port/linux/include/halo_vr.h) */

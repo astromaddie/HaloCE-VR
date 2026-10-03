@@ -1153,15 +1153,12 @@ static void vr_solve_arm(
 	}
 }
 
-void vr_render_first_person_ik(
-	real_matrix4x3 *matrices,
-	struct animation_graph *graph)
+/* vr.arms: 0 "ik", 1 "hidden", 2 "animated" */
+static int vr_render_arms_setting(
+	void)
 {
 	static char const *const arms_setting_names[] = { "ik", "hidden", "animated" };
 	static int arms = -1;
-	static struct animation_graph *logged;
-	short left[NUMBER_OF_VR_ARM_BONES], right[NUMBER_OF_VR_ARM_BONES];
-	int side, bone;
 
 	if (arms < 0)
 	{
@@ -1172,6 +1169,23 @@ void vr_render_first_person_ik(
 		if (arms == 3)
 			arms = 0;
 	}
+	return arms;
+}
+
+int vr_render_first_person_arms_reach(
+	void)
+{
+	return vr_render.stereo && vr_hand_aiming() && vr_render_arms_setting() == 0;
+}
+
+void vr_render_first_person_ik(
+	real_matrix4x3 *matrices,
+	struct animation_graph *graph)
+{
+	static struct animation_graph *logged;
+	short left[NUMBER_OF_VR_ARM_BONES], right[NUMBER_OF_VR_ARM_BONES];
+	int side, bone, arms = vr_render_arms_setting();
+
 	if (!vr_render.stereo || !vr_hand_aiming() || !graph)
 		return;
 	for (side = 0; side < 2; side++)

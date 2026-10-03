@@ -93,6 +93,11 @@ unsigned long vr_render_actions(short local_player_index);
 first_person_weapons.c brackets its drawing with halo_vr_mirror_winding */
 int vr_render_first_person_mirrored(void);
 void halo_vr_mirror_winding(int mirrored);
+/* the first-person arms reach for the hands (vr.arms "ik"), which brings
+the open end of the model's upper arms into view: first_person_weapons.c
+draws the arms two-sided while halo_vr_two_sided is set, their insides dark */
+int vr_render_first_person_arms_reach(void);
+void halo_vr_two_sided(int two_sided);
 /* 1 in a stereo frame, whose eyes see the world unmagnified (a zoom shows
 in the scope, or not at all): the first-person weapon stays in view while
 zoomed, and the HUD draws no zoom mask */
