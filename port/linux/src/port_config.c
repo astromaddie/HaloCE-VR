@@ -418,6 +418,11 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_two_handed", _config_boolean, "false", "HALO_VR_DIAG_TWO_HANDED", _environment_value, _platform_vr,
 		"With vr.force_render: hold the left hand on the gun, ahead and a little\n"
 		"left of the right." },
+	{ "vr.diag_vehicle", _config_string, "\"\"", "HALO_VR_DIAG_VEHICLE", _environment_value, _platform_vr,
+		"With vr.diag_drive_seconds: only a vehicle whose tag name has this in it\n"
+		"(\"warthog\", \"banshee\"); empty for any." },
+	{ "vr.diag_seat", _config_string, "\"driver\"", "HALO_VR_DIAG_SEAT", _environment_value, _platform_vr,
+		"With vr.diag_drive_seconds: the seat taken, \"driver\" or \"gunner\"." },
 	{ "vr.diag_drive_seconds", _config_real, "0.0", "HALO_VR_DIAG_DRIVE_SECONDS", _environment_value, _platform_vr,
 		"This many seconds into play, seat the player as the nearest vehicle's\n"
 		"driver: for testing; 0 never." },

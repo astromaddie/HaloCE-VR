@@ -132,8 +132,10 @@ static real vr_yaw(
 }
 
 /* vr.diag_drive_seconds: this long into play, the local player is seated
-as the driver of the nearest vehicle (for checking vehicles unattended;
-debug.network_test_vehicle does the same in network tests) */
+in the nearest vehicle whose tag name has vr.diag_vehicle in it (any, if
+empty), as its driver or with vr.diag_seat "gunner" its gunner (for checking
+vehicles unattended; debug.network_test_vehicle does the same in network
+tests). The map's vehicles are logged. */
 static void vr_diag_drive(
 	long unit_index)
 {
@@ -143,6 +145,8 @@ static void vr_diag_drive(
 	long nearest_index = NONE;
 	real nearest_distance = 0.0f;
 	short seat_index;
+	char const *wanted;
+	boolean gunner;
 
 	if (seconds < 0.0f)
 		seconds = (real)config_real("vr.diag_drive_seconds");
@@ -153,12 +157,19 @@ static void vr_diag_drive(
 	if (game_time_get() - first_tick < (long)(seconds * TICKS_PER_SECOND))
 		return;
 	seconds = 0.0f;
+	wanted = config_string("vr.diag_vehicle");
+	gunner = !strcmp(config_string("vr.diag_seat"), "gunner");
 	object_iterator_new(&vehicles, _object_mask_vehicle, 0);
 	while (object_iterator_next(&vehicles))
 	{
 		real distance = distance_squared3d(&object_get(unit_index)->object.position,
 			&object_get(vehicles.index)->object.position);
+		char const *name = tag_get_name(object_get(vehicles.index)->definition_index);
 
+		platform_log("vr: diag drive: vehicle %lx '%s', %.1f units away", vehicles.index, name ? name : "?",
+			(real)sqrt(distance));
+		if (*wanted && (!name || !strstr(name, wanted)))
+			continue;
 		if (nearest_index == NONE || distance < nearest_distance)
 		{
 			nearest_index = vehicles.index;
@@ -170,16 +181,34 @@ static void vr_diag_drive(
 		platform_log("vr: diag drive: no vehicle");
 		return;
 	}
+	/* (a vehicle far off is brought beside the player first: seated from
+	afar, the player did not stay in it) */
+	if (nearest_distance > 2.0f * 2.0f)
+	{
+		struct object_datum *player = object_get(unit_index);
+		real_point3d beside = player->object.position;
+		real_vector3d forward = player->object.forward;
+
+		forward.k = 0.0f;
+		if (magnitude_squared3d(&forward) > 1e-6f)
+			normalize3d(&forward);
+		beside.x += forward.i * 0.8f;
+		beside.y += forward.j * 0.8f;
+		beside.z += 0.1f;
+		object_set_position(nearest_index, &beside, &forward, global_up3d);
+		platform_log("vr: diag drive: brought vehicle %lx beside the player", nearest_index);
+	}
 	for (seat_index = 0; seat_index < unit_definition_get(object_get(nearest_index)->definition_index)->unit.seats.count;
 		seat_index++)
 	{
-		if (unit_seat_is_driver(nearest_index, seat_index) && unit_enter_seat(unit_index, nearest_index, seat_index))
+		if ((gunner ? unit_seat_is_gunner(nearest_index, seat_index) : unit_seat_is_driver(nearest_index, seat_index)) &&
+			unit_enter_seat(unit_index, nearest_index, seat_index))
 		{
-			platform_log("vr: diag drive: driving vehicle %lx", nearest_index);
+			platform_log("vr: diag drive: %s of vehicle %lx", gunner ? "gunner" : "driver", nearest_index);
 			return;
 		}
 	}
-	platform_log("vr: diag drive: cannot drive vehicle %lx", nearest_index);
+	platform_log("vr: diag drive: cannot take a %s's seat in vehicle %lx", gunner ? "gunner" : "driver", nearest_index);
 }
 
 /* the local player's seat this frame */
