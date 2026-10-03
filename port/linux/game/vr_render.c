@@ -1660,27 +1660,43 @@ void vr_render_diag_camera(
 /* ---------- the player's own body (vr.body)
 
 Halo draws no body of the player's own in first person: render_object_list
-skips the unit the camera is. With vr.body "legs" the eyes' passes draw it,
+skips the unit the camera is. With vr.body "legs" (the hips down) or
+"torso" (the chest down) the eyes' passes draw it,
 on foot and outside cutscenes, with no head, neck or arms (the first-person
 arms are the player's) and without what it carries (its third-person
 weapon): its bones' matrices are a copy (vr_render_body_nodes), turned to
-the head's yaw and placed under the head, behind the eyes (VR_BODY_BACK) so
-that they look down at the chest and legs, not into the collar. */
+the head's yaw and placed under the head, behind and below the eyes
+(vr_body_back, vr_body_down). */
+
+/* vr.body: 0 "off", 1 "legs" (the hips down), 2 "torso" (the chest down) */
+enum
+{
+	_vr_body_off,
+	_vr_body_legs,
+	_vr_body_torso
+};
 
 /* metres the body sits behind and below the eyes. Halo's near plane is
-some 19 cm out at this scale: the collar and shoulder pads, under the eyes,
-must stay beyond it or they are cut into shards; and too far back, looking
-down shows the floor ahead of the feet */
-#define VR_BODY_BACK 0.10f
-#define VR_BODY_DOWN 0.15f
+some 19 cm out at this scale: with the torso, the collar and shoulder pads
+(under the eyes) must stay beyond it or they are cut into shards; and too
+far back, looking down shows the floor ahead of the feet. With the legs
+alone nothing is near the eyes. */
+static const real vr_body_back[3] = { 0.0f, 0.05f, 0.10f };
+static const real vr_body_down[3] = { 0.0f, 0.0f, 0.15f };
 
 static int vr_render_body_setting(
 	void)
 {
-	static int body = -1;
+	static int body = -1, generation = -1;
 
-	if (body < 0)
-		body = !strcmp(config_string("vr.body"), "legs") ? 1 : 0;
+	/* (read again when the VR settings change it) */
+	if (body < 0 || generation != vr_settings_generation())
+	{
+		generation = vr_settings_generation();
+		char const *setting = config_string("vr.body");
+
+		body = !strcmp(setting, "legs") ? _vr_body_legs : !strcmp(setting, "torso") ? _vr_body_torso : _vr_body_off;
+	}
 	return body;
 }
 
@@ -1705,19 +1721,22 @@ boolean vr_render_body_wanted(
 	return object->object.parent_object_index == NONE;
 }
 
-/* the node, or one above it, is the head, the neck or an upper arm (the
-neck collapsed closes the collar's opening) */
+/* the node, or one above it, is the head, the neck or an upper arm, or
+for the legs alone the spine (all above the hips) */
 static boolean vr_body_node_hidden(
 	struct model *model,
 	short node_index)
 {
+	boolean legs = vr_render_body_setting() == _vr_body_legs;
+
 	short depth;
 
 	for (depth = 0; node_index >= 0 && node_index < model->nodes.count && depth < MAXIMUM_NODES_PER_MODEL; depth++)
 	{
 		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
 
-		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "upperarm"))
+		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "upperarm") ||
+			(legs && strstr(node->name, "spine")))
 			return TRUE;
 		node_index = node->parent_node_index;
 	}
@@ -1784,9 +1803,9 @@ void vr_render_body_nodes(
 
 		matrices[index].position.x += shift.i;
 		matrices[index].position.y += shift.j;
-		to.x = pivot.x - head_forward.i * VR_BODY_BACK * units;
-		to.y = pivot.y - head_forward.j * VR_BODY_BACK * units;
-		to.z = pivot.z - VR_BODY_DOWN * units;
+		to.x = pivot.x - head_forward.i * vr_body_back[vr_render_body_setting()] * units;
+		to.y = pivot.y - head_forward.j * vr_body_back[vr_render_body_setting()] * units;
+		to.z = pivot.z - vr_body_down[vr_render_body_setting()] * units;
 		vr_carry(&matrices[index], &pivot, &to, rotation);
 	}
 }

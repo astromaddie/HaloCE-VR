@@ -163,6 +163,7 @@ static struct vr_menu_setting
 	{ "MORE...", NULL, _vr_setting_page, 1, 0, { { "", "" } } },
 	/* the second page: the HUD, and last of all the way out */
 	{ "HUD", "vr.hud_mode", _vr_setting_string, 3, 1, { { "FAR", "far" }, { "NEAR", "near" }, { "LEASH", "leash" } } },
+	{ "BODY", "vr.body", _vr_setting_string, 3, 1, { { "OFF", "off" }, { "LEGS", "legs" }, { "TORSO", "torso" } } },
 	{ "QUIT TO STEAM", NULL, _vr_setting_quit, 1, 1, { { "", "" } } },
 };
 
