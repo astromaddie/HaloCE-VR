@@ -345,8 +345,9 @@ along it as walking does. Then that place to stand moves to the head.
 `enabled`, `stereo`, `resolution_scale` (1.5), `refresh_rate` (90), `world_scale` (0.328084 units/m),
 `cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
 ("ik" / "hidden" / "animated"), `visibility_mask` (on: the runtime's hidden area masked first in each eye, about 15% of its
-pixels unshaded), `body` ("off" / "legs" / "torso": the player's own hips and legs, or
-also the chest, headless and armless, under the head; not yet worn),
+pixels unshaded), `body` ("off" / "legs" / "torso": on foot the player's own hips and legs, or also the
+chest, headless and armless, under the head; in a vehicle's seat the whole body but its head,
+as the game seats it, its chest set back out of the near plane and its hands on the controls),
 `screen_distance`, `screen_width`, `hud_mode` ("far"/"near"/"leash"), `hud_distance` and `hud_width`
 (0: the mode's own), `aim` ("head"/"hand"),
 `weapon_offset_right`/`_up`/`_back`, `turn_mode` ("snap"/"smooth"/"off"), `snap_angle` (30),

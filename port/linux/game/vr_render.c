@@ -1773,6 +1773,14 @@ static int vr_render_body_setting(
 	return body;
 }
 
+/* the unit sits in the seat the view rides in (vr.vehicle_view
+"first_person"; in the chase view the game draws it anyway) */
+static boolean vr_body_seated(
+	long object_index)
+{
+	return vr_render.seat.seated && vr_render.seat.unit_index == object_index && vr_render_first_person_vehicles();
+}
+
 boolean vr_render_body_wanted(
 	long object_index)
 {
@@ -1780,28 +1788,30 @@ boolean vr_render_body_wanted(
 	long player_index;
 	struct object_datum *object;
 
-	if (!vr_render_body_setting() || !VR_RENDER_EYE() || !vr_render.stereo || !vr_aiming() ||
-		cinematic_in_progress())
-	{
+	if (!vr_render_body_setting() || !VR_RENDER_EYE() || !vr_render.stereo || cinematic_in_progress())
 		return FALSE;
-	}
 	local_player_index = local_player_get_next(NONE);
 	player_index = local_player_index != NONE ? local_player_get_player_index(local_player_index) : NONE;
 	if (player_index == NONE || player_get(player_index)->unit_index != object_index)
 		return FALSE;
 	object = object_get(object_index);
-	/* (in a seat the unit is the vehicle's child: not yet) */
-	return object->object.parent_object_index == NONE;
+	/* in a seat (the vehicle's child), seen from it: the body as the game
+	sits it there, its hands on the controls */
+	if (object->object.parent_object_index != NONE)
+		return vr_body_seated(object_index);
+	return vr_aiming();
 }
 
 /* the node, or one above it, is the head, the neck, a clavicle (the
 shoulder: with the upper arm gone its triangles stretched into shards) or
-an upper arm, or for the legs alone the spine (all above the hips) */
+an upper arm, or for the legs alone the spine (all above the hips). In a
+seat only the head and neck: the arms are on the vehicle's controls */
 static boolean vr_body_node_hidden(
 	struct model *model,
-	short node_index)
+	short node_index,
+	boolean seated)
 {
-	boolean legs = vr_render_body_setting() == _vr_body_legs;
+	boolean legs = !seated && vr_render_body_setting() == _vr_body_legs;
 
 	short depth;
 
@@ -1809,12 +1819,202 @@ static boolean vr_body_node_hidden(
 	{
 		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
 
-		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "clavicle") ||
-			strstr(node->name, "upperarm") || (legs && strstr(node->name, "spine")))
+		if (strstr(node->name, "head") || strstr(node->name, "neck") ||
+			(!seated && (strstr(node->name, "clavicle") || strstr(node->name, "upperarm"))) ||
+			(legs && strstr(node->name, "spine")))
 			return TRUE;
 		node_index = node->parent_node_index;
 	}
 	return FALSE;
+}
+
+/* the model's node named with `name` (" l upperarm"), or NONE */
+static short vr_body_find_node(
+	struct model *model,
+	char const *name)
+{
+	short index;
+
+	for (index = 0; index < model->nodes.count && index < MAXIMUM_NODES_PER_MODEL; index++)
+	{
+		if (strstr(TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->name, name))
+			return index;
+	}
+	return NONE;
+}
+
+/* the node is `root` or under it */
+static boolean vr_body_under(
+	struct model *model,
+	short node_index,
+	short root)
+{
+	short depth;
+
+	for (depth = 0; node_index >= 0 && node_index < model->nodes.count && depth < MAXIMUM_NODES_PER_MODEL; depth++)
+	{
+		if (node_index == root)
+			return TRUE;
+		node_index = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node)->parent_node_index;
+	}
+	return FALSE;
+}
+
+/* turns `root` and all under it by `rotation` about `pivot` */
+static void vr_body_turn(
+	struct model *model,
+	real_matrix4x3 *matrices,
+	short node_count,
+	short root,
+	real_point3d const *pivot,
+	real rotation[3][3])
+{
+	short index;
+
+	for (index = 0; index < node_count; index++)
+	{
+		if (vr_body_under(model, index, root))
+			vr_carry(&matrices[index], pivot, pivot, rotation);
+	}
+}
+
+/* an arm (its upper arm, forearm and hand nodes) from where its shoulder
+now is to the hand's place `target`, the elbow bent toward `pole` */
+static void vr_body_reach(
+	struct model *model,
+	real_matrix4x3 *matrices,
+	short node_count,
+	short upper,
+	short fore,
+	short hand,
+	real_point3d const *target,
+	real_vector3d const *pole)
+{
+	real_point3d shoulder = matrices[upper].position, elbow;
+	real_vector3d upper_bone, fore_bone, reach, direction, bend, now, wanted;
+	real upper_length, fore_length, distance, along, across, dot, rotation[3][3];
+
+	vr_point_minus(&matrices[fore].position, &shoulder, &upper_bone);
+	vr_point_minus(&matrices[hand].position, &matrices[fore].position, &fore_bone);
+	upper_length = vr_length(&upper_bone);
+	fore_length = vr_length(&fore_bone);
+	vr_point_minus(target, &shoulder, &reach);
+	distance = vr_length(&reach);
+	if (upper_length < 1e-5f || fore_length < 1e-5f || distance < 1e-5f)
+		return;
+	direction = reach;
+	normalize3d(&direction);
+	if (distance > (upper_length + fore_length) * 0.999f)
+		distance = (upper_length + fore_length) * 0.999f;
+	if (distance < (real)fabs(upper_length - fore_length) + 1e-4f)
+		distance = (real)fabs(upper_length - fore_length) + 1e-4f;
+	dot = pole->i * direction.i + pole->j * direction.j + pole->k * direction.k;
+	bend.i = pole->i - direction.i * dot;
+	bend.j = pole->j - direction.j * dot;
+	bend.k = pole->k - direction.k * dot;
+	if (vr_length(&bend) < 1e-5f)
+		return;
+	normalize3d(&bend);
+	along = (upper_length * upper_length + distance * distance - fore_length * fore_length) / (2.0f * distance);
+	across = upper_length * upper_length - along * along;
+	across = across > 0.0f ? (real)sqrt(across) : 0.0f;
+	elbow.x = shoulder.x + direction.i * along + bend.i * across;
+	elbow.y = shoulder.y + direction.j * along + bend.j * across;
+	elbow.z = shoulder.z + direction.k * along + bend.k * across;
+	/* the upper arm to the elbow (carrying the rest), then the forearm to
+	the hand's place */
+	vr_point_minus(&elbow, &shoulder, &wanted);
+	vr_rotation_between(&upper_bone, &wanted, rotation);
+	vr_body_turn(model, matrices, node_count, upper, &shoulder, rotation);
+	vr_point_minus(&matrices[hand].position, &matrices[fore].position, &now);
+	vr_point_minus(target, &matrices[fore].position, &wanted);
+	elbow = matrices[fore].position;
+	vr_rotation_between(&now, &wanted, rotation);
+	vr_body_turn(model, matrices, node_count, fore, &elbow, rotation);
+}
+
+/* In a seat the game's body holds the vehicle's controls, but the view
+rides at its head: its shoulders sit inside Halo's near plane (some 19 cm
+out) and were cut into flat shards across the view. The chest and all on
+it go back and down (VR_SEAT_BODY_BACK, _DOWN, along the seat's facing),
+each arm then reaches from its moved shoulder to where the animation had
+its hand, its elbow bent as before, and the hands are put back exactly as
+the animation has them: on the wheel, the handles, the controls. */
+#define VR_SEAT_BODY_BACK 0.12f
+#define VR_SEAT_BODY_DOWN 0.04f
+
+static void vr_body_seat_lean_back(
+	struct model *model,
+	real_matrix4x3 *matrices,
+	short node_count)
+{
+	static char const *const arm_names[2][3] =
+	{
+		{ " l upperarm", " l forearm", " l hand" },
+		{ " r upperarm", " r forearm", " r hand" },
+	};
+	real_matrix4x3 animated[MAXIMUM_NODES_PER_MODEL];
+	short spine = vr_body_find_node(model, " spine");
+	short arms[2][3];
+	real units = vr_units_per_metre();
+	real_vector3d back;
+	int side, bone;
+	short index;
+
+	if (spine == NONE || node_count > MAXIMUM_NODES_PER_MODEL)
+		return;
+	for (side = 0; side < 2; side++)
+	{
+		for (bone = 0; bone < 3; bone++)
+		{
+			arms[side][bone] = vr_body_find_node(model, arm_names[side][bone]);
+			if (arms[side][bone] == NONE)
+				return;
+		}
+	}
+	memcpy(animated, matrices, node_count * sizeof(real_matrix4x3));
+	/* the way the body faces, from its shoulders (Halo's axes: +x forward,
+	+y left, +z up: forward is left across up); a gunner's turns with the
+	turret, apart from the vehicle */
+	{
+		real_vector3d left, facing;
+
+		vr_point_minus(&matrices[arms[0][0]].position, &matrices[arms[1][0]].position, &left);
+		cross_product3d(&left, global_up3d, &facing);
+		facing.k = 0.0f;
+		if (magnitude_squared3d(&facing) < 1e-8f)
+			return;
+		normalize3d(&facing);
+		back.i = -facing.i * VR_SEAT_BODY_BACK * units;
+		back.j = -facing.j * VR_SEAT_BODY_BACK * units;
+		back.k = -VR_SEAT_BODY_DOWN * units;
+	}
+	for (index = 0; index < node_count; index++)
+	{
+		if (vr_body_under(model, index, spine))
+		{
+			matrices[index].position.x += back.i;
+			matrices[index].position.y += back.j;
+			matrices[index].position.z += back.k;
+		}
+	}
+	for (side = 0; side < 2; side++)
+	{
+		short upper = arms[side][0], fore = arms[side][1], hand = arms[side][2];
+		real_vector3d pole;
+
+		/* the elbow's side of the shoulder-to-hand line, as animated */
+		pole.i = animated[fore].position.x - (animated[upper].position.x + animated[hand].position.x) * 0.5f;
+		pole.j = animated[fore].position.y - (animated[upper].position.y + animated[hand].position.y) * 0.5f;
+		pole.k = animated[fore].position.z - (animated[upper].position.z + animated[hand].position.z) * 0.5f;
+		vr_body_reach(model, matrices, node_count, upper, fore, hand, &animated[hand].position, &pole);
+		/* the hand (and its fingers) as the animation has it */
+		for (index = 0; index < node_count; index++)
+		{
+			if (vr_body_under(model, index, hand))
+				matrices[index] = animated[index];
+		}
+	}
 }
 
 void vr_render_body_nodes(
@@ -1826,6 +2026,7 @@ void vr_render_body_nodes(
 	struct object_datum *object = object_get(object_index);
 	long model_index = object_definition_get(object->definition_index)->object.model.index;
 	struct model *model = model_index != NONE ? model_definition_get(model_index) : NULL;
+	boolean seated = object->object.parent_object_index != NONE;
 	real units = vr_units_per_metre();
 	real_vector3d body_forward, head_forward, shift;
 	real rotation[3][3], c, s, back;
@@ -1842,7 +2043,7 @@ void vr_render_body_nodes(
 			struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node);
 
 			platform_log("vr: body node %d '%s' parent %d%s", index, node->name, node->parent_node_index,
-				vr_body_node_hidden(model, index) ? " (hidden)" : "");
+				vr_body_node_hidden(model, index, seated) ? " (hidden)" : "");
 		}
 	}
 	/* no head, neck or arms: each hidden bone shrunk to nothing at the
@@ -1851,16 +2052,24 @@ void vr_render_body_nodes(
 	were (spikes across the view) */
 	for (index = 0; index < node_count && index < model->nodes.count; index++)
 	{
-		if (vr_body_node_hidden(model, index))
+		if (vr_body_node_hidden(model, index, seated))
 		{
 			short kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->parent_node_index;
 
-			while (kept >= 0 && kept < node_count && vr_body_node_hidden(model, kept))
+			while (kept >= 0 && kept < node_count && vr_body_node_hidden(model, kept, seated))
 				kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, kept, struct model_node)->parent_node_index;
 			if (kept >= 0 && kept < node_count)
 				matrices[index].position = matrices[kept].position;
 			matrices[index].scale = 0.0f;
 		}
+	}
+	/* in a seat the game has it where it belongs (and the view rides the
+	seat): only its chest goes back, out of the near plane, the hands kept
+	on the controls */
+	if (seated)
+	{
+		vr_body_seat_lean_back(model, matrices, node_count);
+		return;
 	}
 	/* under the head: moved across by the head's offset from the game's
 	camera, turned from the unit's facing to the head's yaw about the head,
