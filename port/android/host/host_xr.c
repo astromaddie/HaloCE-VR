@@ -58,16 +58,6 @@ enum
 	_action_trigger_right,
 	_action_squeeze_left,
 	_action_squeeze_right,
-	_action_a,
-	_action_b,
-	_action_x,
-	_action_y,
-	_action_white,
-	_action_black,
-	_action_start,
-	_action_back,
-	_action_left_thumb,
-	_action_right_thumb,
 	_action_dpad_up,
 	_action_dpad_down,
 	_action_dpad_left,
@@ -335,16 +325,6 @@ static int create_actions(void)
 		{ _action_trigger_right, "/user/hand/right/input/trigger/value" },
 		{ _action_squeeze_left, "/user/hand/left/input/squeeze/value" },
 		{ _action_squeeze_right, "/user/hand/right/input/squeeze/value" },
-		{ _action_a, "/user/hand/right/input/a/click" },
-		{ _action_b, "/user/hand/right/input/b/click" },
-		{ _action_x, "/user/hand/right/input/x/click" },
-		{ _action_y, "/user/hand/right/input/y/click" },
-		{ _action_white, "/user/hand/left/input/bumper/click" },
-		{ _action_black, "/user/hand/right/input/bumper/click" },
-		{ _action_start, "/user/hand/right/input/menu/click" },
-		{ _action_back, "/user/hand/left/input/view/click" },
-		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
-		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		{ _action_dpad_up, "/user/hand/left/input/dpad_up/click" },
 		{ _action_dpad_down, "/user/hand/left/input/dpad_down/click" },
 		{ _action_dpad_left, "/user/hand/left/input/dpad_left/click" },
@@ -372,13 +352,6 @@ static int create_actions(void)
 		{ _action_trigger_right, "/user/hand/right/input/trigger/value" },
 		{ _action_squeeze_left, "/user/hand/left/input/squeeze/value" },
 		{ _action_squeeze_right, "/user/hand/right/input/squeeze/value" },
-		{ _action_a, "/user/hand/right/input/a/click" },
-		{ _action_b, "/user/hand/right/input/b/click" },
-		{ _action_x, "/user/hand/left/input/x/click" },
-		{ _action_y, "/user/hand/left/input/y/click" },
-		{ _action_start, "/user/hand/left/input/menu/click" },
-		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
-		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		POSES("left"), POSES("right"),
 		{ _action_hand_south, "/user/hand/right/input/a/click" },
 		{ _action_hand_south, "/user/hand/left/input/x/click" },
@@ -396,17 +369,9 @@ static int create_actions(void)
 		{ _action_trigger_right, "/user/hand/right/input/trigger/value" },
 		{ _action_squeeze_left, "/user/hand/left/input/squeeze/value" },
 		{ _action_squeeze_right, "/user/hand/right/input/squeeze/value" },
-		{ _action_a, "/user/hand/right/input/a/click" },
-		{ _action_b, "/user/hand/right/input/b/click" },
-		{ _action_x, "/user/hand/left/input/a/click" },
-		{ _action_y, "/user/hand/left/input/b/click" },
 		/* (Menu is the trackpads' press: the system button is the runtime's, and
 		Index has no other free input. A float bound to a boolean action reads as
 		pressed past the runtime's threshold, a firm press) */
-		{ _action_start, "/user/hand/left/input/trackpad/force" },
-		{ _action_start, "/user/hand/right/input/trackpad/force" },
-		{ _action_left_thumb, "/user/hand/left/input/thumbstick/click" },
-		{ _action_right_thumb, "/user/hand/right/input/thumbstick/click" },
 		POSES("left"), POSES("right"),
 		{ _action_hand_south, "/user/hand/right/input/a/click" },
 		{ _action_hand_south, "/user/hand/left/input/a/click" },
@@ -433,16 +398,6 @@ static int create_actions(void)
 	ok &= create_action(_action_trigger_right, XR_ACTION_TYPE_FLOAT_INPUT, "fire", "Right trigger (fire)", 0);
 	ok &= create_action(_action_squeeze_left, XR_ACTION_TYPE_FLOAT_INPUT, "grip_left", "Left grip", 0);
 	ok &= create_action(_action_squeeze_right, XR_ACTION_TYPE_FLOAT_INPUT, "grip_right", "Right grip", 0);
-	ok &= create_action(_action_a, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_a", "A, Xbox layout (jump)", 0);
-	ok &= create_action(_action_b, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_b", "B, Xbox layout (melee)", 0);
-	ok &= create_action(_action_x, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_x", "X, Xbox layout (action, reload)", 0);
-	ok &= create_action(_action_y, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_y", "Y, Xbox layout (switch weapons)", 0);
-	ok &= create_action(_action_white, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_white", "Left bumper, Xbox layout (flashlight)", 0);
-	ok &= create_action(_action_black, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_black", "Right bumper, Xbox layout (switch grenades)", 0);
-	ok &= create_action(_action_start, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_start", "Menu, Xbox layout (pause; Index: a firm press of a trackpad)", 0);
-	ok &= create_action(_action_back, XR_ACTION_TYPE_BOOLEAN_INPUT, "button_back", "View (back; Xbox layout: held 1 s recentres, 3 s also the standing height)", 0);
-	ok &= create_action(_action_left_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "left_thumb", "Left stick click, Xbox layout (crouch)", 0);
-	ok &= create_action(_action_right_thumb, XR_ACTION_TYPE_BOOLEAN_INPUT, "right_thumb", "Right stick click, Xbox layout (zoom)", 0);
 	ok &= create_action(_action_dpad_up, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_up", "D-pad up", 0);
 	ok &= create_action(_action_dpad_down, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_down", "D-pad down", 0);
 	ok &= create_action(_action_dpad_left, XR_ACTION_TYPE_BOOLEAN_INPUT, "dpad_left", "D-pad left", 0);
@@ -532,16 +487,6 @@ static void sync_input(struct halo_xr_frame *frame)
 {
 	static const struct { int action; uint32_t bit; } buttons[] =
 	{
-		{ _action_a, HALO_XR_BUTTON_A },
-		{ _action_b, HALO_XR_BUTTON_B },
-		{ _action_x, HALO_XR_BUTTON_X },
-		{ _action_y, HALO_XR_BUTTON_Y },
-		{ _action_white, HALO_XR_BUTTON_WHITE },
-		{ _action_black, HALO_XR_BUTTON_BLACK },
-		{ _action_start, HALO_XR_BUTTON_START },
-		{ _action_back, HALO_XR_BUTTON_BACK },
-		{ _action_left_thumb, HALO_XR_BUTTON_LEFT_THUMB },
-		{ _action_right_thumb, HALO_XR_BUTTON_RIGHT_THUMB },
 		{ _action_dpad_up, HALO_XR_BUTTON_DPAD_UP },
 		{ _action_dpad_down, HALO_XR_BUTTON_DPAD_DOWN },
 		{ _action_dpad_left, HALO_XR_BUTTON_DPAD_LEFT },
@@ -583,11 +528,20 @@ static void sync_input(struct halo_xr_frame *frame)
 		};
 		int side;
 
+		/* what no profile binds on a hand is not asked for (each query is a
+		call into SteamVR): the left's west and north face buttons and the
+		right's View anywhere, and on the Frame the left's face buttons and
+		Menu */
+		uint32_t unbound[2];
+
+		unbound[0] = HALO_XR_HAND_WEST | HALO_XR_HAND_NORTH |
+			(xr.has_bumper[0] ? HALO_XR_HAND_SOUTH | HALO_XR_HAND_EAST | HALO_XR_HAND_MENU : 0);
+		unbound[1] = HALO_XR_HAND_VIEW;
 		for (side = 0; side < 2; side++)
 		{
 			for (index = 0; index < sizeof(hand_buttons) / sizeof(hand_buttons[0]); index++)
 			{
-				if (action_boolean_hand(hand_buttons[index].action, side))
+				if (!(unbound[side] & hand_buttons[index].bit) && action_boolean_hand(hand_buttons[index].action, side))
 					frame->hand_buttons[side] |= hand_buttons[index].bit;
 			}
 		}
@@ -604,10 +558,30 @@ static void sync_input(struct halo_xr_frame *frame)
 			}
 		}
 		/* the Frame's d-pad is on its left controller */
-		if (action_boolean(_action_dpad_up)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_UP;
-		if (action_boolean(_action_dpad_down)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_DOWN;
-		if (action_boolean(_action_dpad_left)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_LEFT;
-		if (action_boolean(_action_dpad_right)) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_RIGHT;
+		if (frame->buttons & HALO_XR_BUTTON_DPAD_UP) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_UP;
+		if (frame->buttons & HALO_XR_BUTTON_DPAD_DOWN) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_DOWN;
+		if (frame->buttons & HALO_XR_BUTTON_DPAD_LEFT) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_LEFT;
+		if (frame->buttons & HALO_XR_BUTTON_DPAD_RIGHT) frame->hand_buttons[0] |= HALO_XR_HAND_DPAD_RIGHT;
+	}
+	/* The Xbox pad (vr.controls "pad") from each hand's buttons, rather than
+	actions of its own: every action bound costs xrSyncActions a lookup a
+	frame. A and B are the right's lower and upper face buttons; X and Y the
+	Frame's right west and north, on Touch and Index the left's lower and
+	upper; white and black the bumpers (or their stand-ins); start Menu,
+	back the Frame's View; the stick clicks each hand's. */
+	{
+		uint32_t left = frame->hand_buttons[0], right = frame->hand_buttons[1];
+
+		if (right & HALO_XR_HAND_SOUTH) frame->buttons |= HALO_XR_BUTTON_A;
+		if (right & HALO_XR_HAND_EAST) frame->buttons |= HALO_XR_BUTTON_B;
+		if (xr.has_bumper[1] ? right & HALO_XR_HAND_WEST : left & HALO_XR_HAND_SOUTH) frame->buttons |= HALO_XR_BUTTON_X;
+		if (xr.has_bumper[1] ? right & HALO_XR_HAND_NORTH : left & HALO_XR_HAND_EAST) frame->buttons |= HALO_XR_BUTTON_Y;
+		if (left & HALO_XR_HAND_BUMPER) frame->buttons |= HALO_XR_BUTTON_WHITE;
+		if (right & HALO_XR_HAND_BUMPER) frame->buttons |= HALO_XR_BUTTON_BLACK;
+		if ((left | right) & HALO_XR_HAND_MENU) frame->buttons |= HALO_XR_BUTTON_START;
+		if (left & HALO_XR_HAND_VIEW) frame->buttons |= HALO_XR_BUTTON_BACK;
+		if (left & HALO_XR_HAND_STICK) frame->buttons |= HALO_XR_BUTTON_LEFT_THUMB;
+		if (right & HALO_XR_HAND_STICK) frame->buttons |= HALO_XR_BUTTON_RIGHT_THUMB;
 	}
 	for (hand = 0; hand < 2; hand++)
 	{
