@@ -510,6 +510,28 @@ real render_interpolation_fraction(void)
 	return interpolation_rendering ? interpolation_fraction : 1.0f;
 }
 
+/* the headset's vr.diag_motion: objects drawn blended and not this frame,
+and the first object seen moving, followed (its blended root) */
+static struct
+{
+	boolean enabled;
+	long blended, unblended;
+	long object_index;
+	real_point3d position;
+} interpolation_diag = { FALSE, 0, 0, NONE };
+
+void render_interpolation_diag(int enable, long *blended, long *unblended, long *object_index, float position[3])
+{
+	interpolation_diag.enabled = enable != 0;
+	*blended = interpolation_diag.blended;
+	*unblended = interpolation_diag.unblended;
+	*object_index = interpolation_diag.object_index;
+	position[0] = interpolation_diag.position.x;
+	position[1] = interpolation_diag.position.y;
+	position[2] = interpolation_diag.position.z;
+	interpolation_diag.blended = interpolation_diag.unblended = 0;
+}
+
 real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 {
 	struct interpolated_object *record;
@@ -522,7 +544,10 @@ real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 		return NULL;
 	record = &interpolated_objects[absolute_index];
 	if (record->object_index != object_index || record->tick != interpolation_tick || !record->has_previous)
+	{
+		interpolation_diag.unblended++;
 		return NULL;
+	}
 	if (record->blended_frame != interpolation_frame)
 	{
 		real_matrix4x3 const *previous = record->nodes + (record->latest ^ 1) * record->node_capacity;
@@ -578,6 +603,18 @@ real_matrix4x3 *render_interpolation_object_node_matrices(long object_index)
 			}
 		}
 		record->blended_frame = interpolation_frame;
+		if (interpolation_diag.enabled)
+		{
+			real_matrix4x3 const *previous = record->nodes + (record->latest ^ 1) * record->node_capacity;
+			real_matrix4x3 const *latest = record->nodes + record->latest * record->node_capacity;
+			real moved = distance_squared(&previous[0].position, &latest[0].position);
+
+			interpolation_diag.blended++;
+			if (interpolation_diag.object_index == NONE && moved > 0.005f * 0.005f && moved < 1.0f)
+				interpolation_diag.object_index = object_index;
+			if (interpolation_diag.object_index == object_index)
+				interpolation_diag.position = blended[0].position;
+		}
 	}
 	return record->nodes + 2 * record->node_capacity;
 }

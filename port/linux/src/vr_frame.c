@@ -1061,7 +1061,9 @@ the two ticks the game's camera is blended from */
 float render_interpolation_fraction(void);
 /* game/game_time.c, port/linux/game/vr_render.c (vr.diag_motion) */
 long game_time_get(void);
+float game_time_get_tick_fraction(void);
 void vr_render_diag_camera(float out[3]);
+void render_interpolation_diag(int enable, long *blended, long *unblended, long *object_index, float position[3]);
 
 /* the head's offset from the recentred origin (with vr.roomscale, from the
 floor's point the player stands on, as far between its last two ticks as
@@ -2342,14 +2344,21 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	a cutscene), for judging how evenly things move */
 	if (vr.diag_motion > 0 && (vr.stereo || vr.cinema))
 	{
-		float camera[3];
+		float camera[3], object[3];
+		long blended, unblended, object_index;
 
 		vr_render_diag_camera(camera);
-		platform_log("vr-motion: step %.3f ms, blend %.4f, tick %ld, camera %.5f %.5f %.5f",
+		render_interpolation_diag(1, &blended, &unblended, &object_index, object);
+		/* (the blend the frame was drawn with: the game clock has not moved
+		since, and render_interpolation_fraction is 1 outside the drawing) */
+		platform_log("vr-motion: step %.3f ms, blend %.4f, tick %ld, camera %.5f %.5f %.5f, "
+			"objects %ld blended %ld not, object %lx at %.5f %.5f %.5f",
 			vr.diag_motion_display_time ? (double)(vr.frame.predicted_display_time - vr.diag_motion_display_time) * 1e-6 : 0.0,
-			(double)render_interpolation_fraction(), game_time_get(), camera[0], camera[1], camera[2]);
+			(double)game_time_get_tick_fraction(), game_time_get(), camera[0], camera[1], camera[2],
+			blended, unblended, (unsigned long)object_index, object[0], object[1], object[2]);
 		vr.diag_motion_display_time = vr.frame.predicted_display_time;
-		vr.diag_motion--;
+		if (--vr.diag_motion == 0)
+			render_interpolation_diag(0, &blended, &unblended, &object_index, object);
 	}
 	/* the [vr-perf] window: CPU stages apart from the waits (the game's own
 	work, the passes' draw calls, the copies into the images, ending the
