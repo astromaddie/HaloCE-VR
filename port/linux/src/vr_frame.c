@@ -149,6 +149,9 @@ static struct
 	display step, the blend between ticks, the tick and the camera */
 	int diag_motion;
 	long long diag_motion_display_time;
+	/* vr.diag_buttons: log the hands' and the pad's buttons as they change */
+	int diag_buttons;
+	unsigned int diag_buttons_last[3];
 	long dump_frame, dump_cinema_frame;
 	long stereo_frames, cinema_frames;
 	/* timing: vr.timing shortens the [vr-perf] window, vr.timing_gpu waits for the
@@ -357,6 +360,7 @@ void vr_initialize(void)
 	vr.room_held = 1;
 	vr.diag_two_handed = config_boolean("vr.diag_two_handed");
 	vr.diag_motion = config_integer("vr.diag_motion");
+	vr.diag_buttons = config_boolean("vr.diag_buttons");
 	vr.dump_frame = config_integer("vr.dump_frame");
 	vr.dump_cinema_frame = config_integer("vr.dump_cinema_frame");
 	if (vr.units_per_metre <= 0.0f)
@@ -454,6 +458,18 @@ static void system_layer(unsigned int left)
 	}
 }
 
+/* vr.diag_buttons: each hand's buttons and the pad's, as they change */
+static void log_buttons(const char *layout)
+{
+	unsigned int now[3] = { vr.frame.hand_buttons[0], vr.frame.hand_buttons[1], vr.pad_buttons };
+
+	if (!vr.diag_buttons || !memcmp(now, vr.diag_buttons_last, sizeof(now)))
+		return;
+	memcpy(vr.diag_buttons_last, now, sizeof(now));
+	platform_log("vr-buttons: %s layout, left %04x right %04x, pad %04x, triggers %.2f %.2f",
+		layout, now[0], now[1], now[2], vr.frame.trigger[0], vr.frame.trigger[1]);
+}
+
 /* the VR layout (vr.controls "vr") on the Xbox pad the game reads, whose
 buttons do (input_abstraction.c): A jump, B melee, X action and reload,
 Y switch weapons, white flashlight, black switch grenades, left trigger
@@ -477,6 +493,7 @@ static void layout_controls(void)
 			vr.back_pulse--;
 		}
 		memcpy(vr.pad_trigger, vr.frame.trigger, sizeof(vr.pad_trigger));
+		log_buttons("pad");
 		return;
 	}
 	if (right & HALO_XR_HAND_SOUTH) buttons |= HALO_XR_BUTTON_A;           /* jump */
@@ -507,6 +524,7 @@ static void layout_controls(void)
 	/* the grenade on the weapon hand's bumper, fire on its trigger */
 	vr.pad_trigger[0] = (vr.frame.hand_buttons[vr.weapon_hand] & HALO_XR_HAND_BUMPER) ? 1.0f : 0.0f;
 	vr.pad_trigger[1] = vr.frame.trigger[vr.weapon_hand];
+	log_buttons("vr");
 }
 
 /* ---------- gestures (after the PC mod HaloCEVR's designs, by LivingFray) */

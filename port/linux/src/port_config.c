@@ -400,6 +400,8 @@ static const struct config_setting config_settings[] =
 	{ "vr.diag_hand_yaw", _config_real, "0.0", "HALO_VR_DIAG_HAND_YAW", _environment_value, _platform_vr,
 		"With vr.force_render: turn the right hand left of the head by this many\n"
 		"degrees." },
+	{ "vr.diag_buttons", _config_boolean, "false", "HALO_VR_DIAG_BUTTONS", _environment_value, _platform_vr,
+		"Log each hand's buttons and the pad's as they change." },
 	{ "vr.diag_motion", _config_integer, "0", "HALO_VR_DIAG_MOTION", _environment_value, _platform_vr,
 		"Log this many frames of motion (each frame's display step, the blend\n"
 		"between ticks, the tick and the camera), from the first view drawn." },
