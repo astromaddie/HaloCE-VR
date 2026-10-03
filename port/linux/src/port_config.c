@@ -344,6 +344,9 @@ static const struct config_setting config_settings[] =
 		"shoulders to the hands (the left to the left controller, or to the gun\n"
 		"when held near it); \"hidden\" shows the gun alone; \"animated\" moves\n"
 		"them with the gun as the game animates them." },
+	{ "vr.body", _config_string, "\"off\"", "HALO_VR_BODY", _environment_value, _platform_vr,
+		"The player's own body, seen looking down: \"off\", or \"legs\" (Master\n"
+		"Chief's legs and torso, without head or arms; the first-person arms stay)." },
 	{ "vr.two_handed", _config_string, "\"grip\"", "HALO_VR_TWO_HANDED", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": holding the gun in both hands steadies it, pointing\n"
 		"from the weapon hand to the other. \"grip\": the other hand's grip held\n"

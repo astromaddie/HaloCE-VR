@@ -26,6 +26,8 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "tag_files/tag_files.h"
 #include "items/weapons.h"
 #include "items/weapon_definitions.h"
+#include "models/model_definitions.h"
+#include "objects/object_definitions.h"
 
 #include "halo_vr.h"
 #include "../src/vr.h"
@@ -1406,6 +1408,26 @@ static void vr_solve_arm(
 	}
 }
 
+/* the head's yaw as a level direction (Halo's axes). Looking straight
+down, its forward has no yaw left: its up (then pointing ahead) gives it */
+static void vr_head_yaw_forward(
+	real_vector3d *forward)
+{
+	*forward = vr_render.head_camera.forward;
+	forward->k = 0.0f;
+	if (magnitude_squared3d(forward) < 0.25f)
+	{
+		real toward = vr_render.head_camera.forward.k < 0.0f ? 1.0f : -1.0f;
+
+		forward->i += vr_render.head_camera.up.i * toward;
+		forward->j += vr_render.head_camera.up.j * toward;
+	}
+	if (magnitude_squared3d(forward) < 1e-6f && !vr_heading_forward(forward->n))
+		*forward = vr_render.head_camera.forward;
+	forward->k = 0.0f;
+	normalize3d(forward);
+}
+
 /* vr.arms: 0 "ik", 1 "hidden", 2 "animated" */
 static int vr_render_arms_setting(
 	void)
@@ -1556,21 +1578,8 @@ void vr_render_first_person_ik(
 		eyes: the model's upper arms end partway, open, and a shoulder left
 		where the body faces would bring that end into view as the head
 		turns toward it. The hands stay on the controllers (the arms reach
-		for them). Looking straight down, the head's forward has no yaw left:
-		its up (then pointing ahead) gives it. */
-		forward = vr_render.head_camera.forward;
-		forward.k = 0.0f;
-		if (magnitude_squared3d(&forward) < 0.25f)
-		{
-			real toward = vr_render.head_camera.forward.k < 0.0f ? 1.0f : -1.0f;
-
-			forward.i += vr_render.head_camera.up.i * toward;
-			forward.j += vr_render.head_camera.up.j * toward;
-		}
-		if (magnitude_squared3d(&forward) < 1e-6f && !vr_heading_forward(forward.n))
-			forward = vr_render.head_camera.forward;
-		forward.k = 0.0f;
-		normalize3d(&forward);
+		for them). */
+		vr_head_yaw_forward(&forward);
 		right_side.i = forward.j;
 		right_side.j = -forward.i;
 		right_side.k = 0.0f;
@@ -1646,6 +1655,132 @@ void vr_render_diag_camera(
 	out[0] = vr_render.diag_camera.x;
 	out[1] = vr_render.diag_camera.y;
 	out[2] = vr_render.diag_camera.z;
+}
+
+/* ---------- the player's own body (vr.body)
+
+Halo draws no body of the player's own in first person: render_object_list
+skips the unit the camera is. With vr.body "legs" the eyes' passes draw it,
+on foot and outside cutscenes, with no head, neck or arms (the first-person
+arms are the player's) and without what it carries (its third-person
+weapon): its bones' matrices are a copy (vr_render_body_nodes), turned to
+the head's yaw and placed under the head, a little behind the eyes so that
+they look down past the chest, not out from inside it. */
+
+static int vr_render_body_setting(
+	void)
+{
+	static int body = -1;
+
+	if (body < 0)
+		body = !strcmp(config_string("vr.body"), "legs") ? 1 : 0;
+	return body;
+}
+
+boolean vr_render_body_wanted(
+	long object_index)
+{
+	short local_player_index;
+	long player_index;
+	struct object_datum *object;
+
+	if (!vr_render_body_setting() || !VR_RENDER_EYE() || !vr_render.stereo || !vr_aiming() ||
+		cinematic_in_progress())
+	{
+		return FALSE;
+	}
+	local_player_index = local_player_get_next(NONE);
+	player_index = local_player_index != NONE ? local_player_get_player_index(local_player_index) : NONE;
+	if (player_index == NONE || player_get(player_index)->unit_index != object_index)
+		return FALSE;
+	object = object_get(object_index);
+	/* (in a seat the unit is the vehicle's child: not yet) */
+	return object->object.parent_object_index == NONE;
+}
+
+/* the node, or one above it, is the head, the neck or an upper arm */
+static boolean vr_body_node_hidden(
+	struct model *model,
+	short node_index)
+{
+	short depth;
+
+	for (depth = 0; node_index >= 0 && node_index < model->nodes.count && depth < MAXIMUM_NODES_PER_MODEL; depth++)
+	{
+		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
+
+		if (strstr(node->name, "head") || strstr(node->name, "neck") || strstr(node->name, "upperarm"))
+			return TRUE;
+		node_index = node->parent_node_index;
+	}
+	return FALSE;
+}
+
+void vr_render_body_nodes(
+	long object_index,
+	real_matrix4x3 *matrices,
+	short node_count)
+{
+	static long logged_model = NONE;
+	struct object_datum *object = object_get(object_index);
+	long model_index = object_definition_get(object->definition_index)->object.model.index;
+	struct model *model = model_index != NONE ? model_definition_get(model_index) : NULL;
+	real units = vr_units_per_metre();
+	real_vector3d body_forward, head_forward, shift;
+	real rotation[3][3], c, s;
+	real_point3d pivot;
+	short index;
+
+	if (!model)
+		return;
+	if (logged_model != model_index)
+	{
+		logged_model = model_index;
+		for (index = 0; index < model->nodes.count; index++)
+		{
+			struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node);
+
+			platform_log("vr: body node %d '%s' parent %d%s", index, node->name, node->parent_node_index,
+				vr_body_node_hidden(model, index) ? " (hidden)" : "");
+		}
+	}
+	/* no head, neck or arms */
+	for (index = 0; index < node_count && index < model->nodes.count; index++)
+	{
+		if (vr_body_node_hidden(model, index))
+			matrices[index].scale = 0.0f;
+	}
+	/* under the head: moved across by the head's offset from the game's
+	camera, turned from the unit's facing to the head's yaw about the head,
+	then set back */
+	shift.i = vr_render.head_camera.position.x - vr_render.game_camera_position.x;
+	shift.j = vr_render.head_camera.position.y - vr_render.game_camera_position.y;
+	body_forward = object->object.forward;
+	body_forward.k = 0.0f;
+	if (magnitude_squared3d(&body_forward) < 1e-6f)
+		return;
+	normalize3d(&body_forward);
+	vr_head_yaw_forward(&head_forward);
+	c = body_forward.i * head_forward.i + body_forward.j * head_forward.j;
+	s = body_forward.i * head_forward.j - body_forward.j * head_forward.i;
+	memset(rotation, 0, sizeof(rotation));
+	rotation[0][0] = c;
+	rotation[0][1] = -s;
+	rotation[1][0] = s;
+	rotation[1][1] = c;
+	rotation[2][2] = 1.0f;
+	pivot = vr_render.head_camera.position;
+	for (index = 0; index < node_count; index++)
+	{
+		real_point3d to;
+
+		matrices[index].position.x += shift.i;
+		matrices[index].position.y += shift.j;
+		to.x = pivot.x - head_forward.i * 0.12f * units;
+		to.y = pivot.y - head_forward.j * 0.12f * units;
+		to.z = pivot.z;
+		vr_carry(&matrices[index], &pivot, &to, rotation);
+	}
 }
 
 #endif /* HALO_VR */

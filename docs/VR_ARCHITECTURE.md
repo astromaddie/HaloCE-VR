@@ -344,7 +344,8 @@ along it as walking does. Then that place to stand moves to the head.
 
 `enabled`, `stereo`, `resolution_scale` (1.5), `refresh_rate` (90), `world_scale` (0.328084 units/m),
 `cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
-("ik" / "hidden" / "animated"),
+("ik" / "hidden" / "animated"), `body` ("off" / "legs": the player's own legs and torso, headless
+and armless, under the head; not yet worn),
 `screen_distance`, `screen_width`, `hud_mode` ("far"/"near"/"leash"), `hud_distance` and `hud_width`
 (0: the mode's own), `aim` ("head"/"hand"),
 `weapon_offset_right`/`_up`/`_back`, `turn_mode` ("snap"/"smooth"/"off"), `snap_angle` (30),

@@ -112,6 +112,8 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "rasterizer/rasterizer_console_vars.h"
 #include "rasterizer/rasterizer_model_types.h"
+#include "models/model_definitions.h"
+#include "halo_vr.h"
 
 /* ---------- constants */
 
@@ -470,8 +472,15 @@ static void render_object_list(
 	while (object_index != NONE)
 	{
 		struct object_datum *object = object_get(object_index);
+#ifdef HALO_VR
+		/* the headset's own body (vr.body): drawn in the eyes, without
+		what it carries */
+		boolean vr_body = !data->shadow && vr_render_body_wanted(object_index);
+#else
+		boolean vr_body = FALSE;
+#endif
 
-		if (!object_is_first_person_camera(object_index) || render.camera.mirrored)
+		if (!object_is_first_person_camera(object_index) || render.camera.mirrored || vr_body)
 		{
 			struct render_model_effect model_effect;
 
@@ -599,10 +608,25 @@ static void render_object_list(
 						}
 					}
 
+#ifdef HALO_VR
+					real_matrix4x3 body_matrices[MAXIMUM_NODES_PER_MODEL];
+					real_matrix4x3 *node_matrices = object_get_node_matrices(object_index);
+					short node_count = (short)(object->object.node_matrices.size / (short)sizeof(real_matrix4x3));
+
+					if (vr_body && node_count > 0 && node_count <= MAXIMUM_NODES_PER_MODEL)
+					{
+						memcpy(body_matrices, node_matrices, node_count * sizeof(real_matrix4x3));
+						vr_render_body_nodes(object_index, body_matrices, node_count);
+						node_matrices = body_matrices;
+					}
+#else
+					real_matrix4x3 *node_matrices = object_get_node_matrices(object_index);
+#endif
+
 					render_model(
 						definition->object.model.index,
 						level_of_detail_pixels,
-						object_get_node_matrices(object_index),
+						node_matrices,
 						object->object.region_permutations,
 						object->object.outgoing_change_colors,
 						object->object.outgoing_function_values,
@@ -647,7 +671,7 @@ static void render_object_list(
 				widgets_render(object_index, data->lighting, &animation);
 			}
 
-			if (object->object.first_child_object_index != NONE)
+			if (object->object.first_child_object_index != NONE && !vr_body)
 			{
 				render_object_list(
 					data,

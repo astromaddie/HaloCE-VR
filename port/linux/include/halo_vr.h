@@ -101,6 +101,10 @@ void halo_vr_mirror_winding(int mirrored);
 the open end of the model's upper arms into view: first_person_weapons.c
 draws the arms two-sided while halo_vr_two_sided is set, their insides dark */
 int vr_render_first_person_arms_reach(void);
+/* the player's own body (vr.body): whether an eye's pass draws this unit,
+and its bones' matrices (a copy) made the body's (render_objects.c) */
+boolean vr_render_body_wanted(long object_index);
+void vr_render_body_nodes(long object_index, real_matrix4x3 *matrices, short node_count);
 void halo_vr_two_sided(int two_sided);
 /* 1 in a stereo frame, whose eyes see the world unmagnified (a zoom shows
 in the scope, or not at all): the first-person weapon stays in view while
