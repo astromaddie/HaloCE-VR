@@ -629,6 +629,7 @@ static void handle_one_player_input(
 	{
 		unsigned long actions = vr_render_actions(local_player_index);
 
+		vr_render_drive_throttle(local_player_index, &input.throttle);
 		if (actions & VR_RENDER_ACTION_MELEE)
 			SET_FLAG(input.unit_control_flags, _unit_control_use_equipment_bit, TRUE);
 		if (actions & VR_RENDER_ACTION_FLASHLIGHT)

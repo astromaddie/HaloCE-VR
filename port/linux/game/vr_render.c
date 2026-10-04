@@ -94,6 +94,13 @@ enum
 	_vr_steering_stick,
 	_vr_steering_head,
 	_vr_steering_hand,
+	/* the left stick drives (the default): sideways steers in proportion,
+	forward and back are gas and reverse; a flier flies where the hand
+	points */
+	_vr_steering_drive,
+	/* as drive, and with both grips held the Warthog's wheel turns with the
+	hands, the triggers its pedals */
+	_vr_steering_wheel,
 };
 
 static boolean vr_first_person_vehicles(
@@ -117,13 +124,110 @@ static int vr_vehicle_steering(
 
 	if (steering < 0 || generation != vr_settings_generation())
 	{
-		generation = vr_settings_generation();
 		char const *setting = config_string("vr.vehicle_steering");
 
+		generation = vr_settings_generation();
 		steering = !strcmp(setting, "head") ? _vr_steering_head :
-			!strcmp(setting, "hand") ? _vr_steering_hand : _vr_steering_stick;
+			!strcmp(setting, "hand") ? _vr_steering_hand :
+			!strcmp(setting, "stick") ? _vr_steering_stick :
+			!strcmp(setting, "wheel") ? _vr_steering_wheel : _vr_steering_drive;
 	}
 	return steering;
+}
+
+static real vr_yaw(real_vector3d const *forward);
+
+/* source/units/vehicles.c: the vehicle's type and its wheels' steering
+limit (degrees) */
+short vehicle_vr_steering(long vehicle_index, real *limit_degrees);
+
+/* the vehicle types (vehicles.c) */
+enum
+{
+	_vr_vehicle_tank = 0,
+	_vr_vehicle_jeep,
+	_vr_vehicle_boat,
+	_vr_vehicle_plane,
+	_vr_vehicle_scout,
+	_vr_vehicle_fighter,
+	_vr_vehicle_turret,
+};
+
+/* how a driver is steered this frame (vr.vehicle_steering and the vehicle):
+drive and wheel apply to the Warthog and the Ghost; a flier (the Banshee)
+flies where the hand points; the Scorpion keeps the game's own driving, its
+cannon aimed by the head */
+static int vr_driver_steering(
+	void)
+{
+	int steering = vr_vehicle_steering();
+	real limit;
+	short type;
+
+	if (!vr_render.seat.seated || !vr_render.seat.driver ||
+		(steering != _vr_steering_drive && steering != _vr_steering_wheel) ||
+		!TEST_FLAG(_object_mask_vehicle, object_get(vr_render.seat.vehicle_index)->object.type))
+	{
+		return steering;
+	}
+	type = vehicle_vr_steering(vr_render.seat.vehicle_index, &limit);
+	if (type == _vr_vehicle_fighter || type == _vr_vehicle_plane)
+		return _vr_steering_hand;
+	if (type == _vr_vehicle_tank)
+		return _vr_steering_head;
+	if (steering == _vr_steering_wheel && type != _vr_vehicle_jeep)
+		return _vr_steering_drive;
+	return steering;
+}
+
+/* drive and wheel: the facing the vehicle steers toward, its heading turned
+by the steering in proportion to the wheels' limit (Halo turns a vehicle's
+wheels toward its driver's facing, within that limit). Reversing, Halo turns
+the wheels the other way; so does this, so that they follow the stick as a
+car's do. */
+static boolean vr_drive_facing(
+	int steering,
+	real_vector3d *facing)
+{
+	struct object_datum *vehicle = object_get(vr_render.seat.vehicle_index);
+	float steer, pedals;
+	int wheel;
+	real limit, angle, yaw;
+
+	if (!vr_drive_input(steering == _vr_steering_wheel, &steer, &pedals, &wheel))
+		return FALSE;
+	vehicle_vr_steering(vr_render.seat.vehicle_index, &limit);
+	/* (a Ghost turns toward its facing as fast as it is off it: a little
+	more reach) */
+	if (limit < 20.0f)
+		limit = 45.0f;
+	angle = steer * limit * (_pi / 180.0f);
+	if (dot_product3d(&vehicle->object.forward, &vehicle->object.translational_velocity) < -0.001f)
+		angle = -angle;
+	yaw = vr_yaw(&vehicle->object.forward) - angle;
+	facing->i = (real)cos(yaw);
+	facing->j = (real)sin(yaw);
+	facing->k = 0.0f;
+	return TRUE;
+}
+
+void vr_render_drive_throttle(
+	short local_player_index,
+	real_vector2d *throttle)
+{
+	int steering;
+	float steer, pedals;
+	int wheel;
+
+	if (local_player_index != local_player_get_next(NONE) || !vr_active() || cinematic_in_progress())
+		return;
+	steering = vr_driver_steering();
+	if (steering != _vr_steering_drive && steering != _vr_steering_wheel)
+		return;
+	/* the stick's sideways steers rather than strafes (a Ghost's) */
+	throttle->j = 0.0f;
+	if (vr_drive_input(steering == _vr_steering_wheel, &steer, &pedals, &wheel) && wheel)
+		throttle->i = pedals;
 }
 
 static real vr_yaw(
@@ -832,7 +936,7 @@ void vr_player_control_facing(
 	angles = player_control_get_facing_angles(local_player_index);
 	/* a driver steered by the stick (vr.vehicle_steering "stick"): the game
 	takes the right stick as it would, and the head only looks */
-	if (seated && vr_render.seat.driver && vr_vehicle_steering() == _vr_steering_stick)
+	if (seated && vr_render.seat.driver && vr_driver_steering() == _vr_steering_stick)
 	{
 		vr_render.hand_origin_valid = FALSE;
 		return;
@@ -840,10 +944,28 @@ void vr_player_control_facing(
 	{
 		/* the hand aims on foot, and a driver's seat steered by it; the head
 		in any other seat (a turret aims where the head looks) */
-		boolean hand_may_aim = !seated || (vr_render.seat.driver && vr_vehicle_steering() == _vr_steering_hand);
+		static char const *const steering_names[] = { "stick", "head", "hand", "drive", "wheel" };
+		static int steering_logged = NONE;
+		int steering = seated && vr_render.seat.driver ? vr_driver_steering() : NONE;
+		boolean hand_may_aim = !seated || steering == _vr_steering_hand;
 		real heading = vr_render.seat.heading;
 
+		if (steering != steering_logged)
+		{
+			if (steering != NONE)
+				platform_log("vr: driving %s, steered by %s", tag_get_name(object_get(vr_render.seat.vehicle_index)->definition_index),
+					steering_names[steering]);
+			steering_logged = steering;
+		}
+
 		if (!vr_aim(angles->yaw, seated, hand_may_aim, vr_seat_view() ? &heading : NULL, forward.n))
+		{
+			vr_render.hand_origin_valid = FALSE;
+			return;
+		}
+		/* driving with the left stick (or the wheel): the vehicle steers
+		toward its heading turned by it; the head only looks */
+		if ((steering == _vr_steering_drive || steering == _vr_steering_wheel) && !vr_drive_facing(steering, &forward))
 		{
 			vr_render.hand_origin_valid = FALSE;
 			return;

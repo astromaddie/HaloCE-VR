@@ -116,6 +116,10 @@ int vr_render_unzoomed_view(void);
 (`position`, `height`, `width` as biped_get_physics_pill gives them) by
 where the head walked this tick, as far as the world lets it */
 void vr_render_room_scale(long biped_index, union real_point3d *position, real height, real width);
+/* handle_one_player_input: a driver's throttle with vr.vehicle_steering
+"drive" or "wheel" (no strafing; with the hands on the wheel, the triggers) */
+union real_vector2d;
+void vr_render_drive_throttle(short local_player_index, union real_vector2d *throttle);
 /* motion_sensor_update: the yaw (radians) the first local player's motion
 sensor turns with, the head's, not the hand's aim; 0 to leave the
 facing's */

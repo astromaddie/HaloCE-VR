@@ -2707,3 +2707,20 @@ animate:
 
 	return TRUE;
 }
+
+#ifdef HALO_VR
+/* port (port/linux/game/vr_render.c, the headset's driving): the vehicle's
+type (_vehicle_type_*) and how far its wheels steer, in degrees */
+short vehicle_vr_steering(
+	long vehicle_index,
+	real *limit_degrees)
+{
+	struct vehicle_definition *definition =
+		vehicle_specific_definition_get(object_get(vehicle_index)->definition_index);
+	real high = (real)fabs(definition->unknown308);
+	real low = (real)fabs(definition->unknown30c);
+
+	*limit_degrees = high > low ? high : low;
+	return definition->vehicle_type;
+}
+#endif

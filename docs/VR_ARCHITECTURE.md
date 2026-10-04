@@ -16,7 +16,8 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Hand-aimed weapons | Default (`vr.aim = "hand"`); verified unattended with synthetic hands. **Not yet played.** |
 | Arm IK | Default (`vr.arms = "ik"`); verified unattended. **Not yet played.** |
 | 3D cutscenes on a screen, fades | Default (`vr.cinema_3d`); verified unattended. **Not yet seen worn.** |
-| Vehicles: first-person seats, stick steering | Built, **not yet run on the device** (the headset went offline mid-test). `vr.vehicle_view` "first_person" (default) or "chase"; `vr.vehicle_steering` "stick" (default), "head" or "hand". |
+| Vehicles: first-person seats | Worn 2026-10-04 (the Warthog bounced; code-ea's eased seat view since). `vr.vehicle_view` "first_person" (default) or "chase" |
+| Driving: `vr.vehicle_steering` "drive" (default: the left stick steers in proportion, gas and reverse on it too), "wheel" (both grips on the Warthog's wheel, triggers as pedals), the Banshee flying where the hand points; "stick", "head", "hand" kept | Built after the 2026-10-04 wear (two-stick driving found bad; the user chose options A, C and D of the driving mockup). **Not yet worn** |
 | VR-native controls, gestures, left-handed play | Built (`vr.controls = "vr"`, default; `"pad"` keeps the Xbox mapping). **Not yet run on the device.** |
 | Aim smoothing when zoomed, haptics | Built, **not yet run on the device.** |
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
@@ -418,8 +419,21 @@ Diagnostics:
   camera marker is the chase camera's place, so it isn't used.
   - The view turns with the vehicle's yaw only, keeping the horizon level. A passenger seat
     facing aside (the Pelican's) keeps the turn it had when you sat down.
-  - The driver's right stick steers as in flat Halo, and your head only looks. Gunner seats aim
-    with your head, and the handheld weapon is hidden in driver and gunner seats.
+  - **Driving** (`vr.vehicle_steering`, chosen from the 2026-10-04 driving mockup):
+    - "drive" (default, option A): the left stick drives the Warthog and the Ghost. Sideways
+      steers in proportion (the driver's facing is the vehicle's heading turned by the stick times
+      the wheels' limit, and Halo turns the wheels toward the facing); forward and back are gas
+      and reverse; the Ghost no longer strafes. Reversing, the angle is mirrored so the wheels
+      follow the stick as a car's do. The head looks freely, and the right stick does nothing.
+    - "wheel" (option C): as drive, and in a Warthog with both grips held the hands turn the
+      wheel (the tilt of the line between them across the head's heading; a quarter turn is
+      full lock) while the triggers are the pedals (right gas, left brake and reverse).
+    - With either, a flier (the Banshee) flies where the hand points (option D), and the
+      Scorpion keeps the game's driving with its cannon aimed by the head.
+    - "stick" (the right stick steers, as in flat Halo), "head" and "hand" remain, for every
+      vehicle. Settings version 4 moves the old default "stick" to "drive".
+  - Gunner seats aim with your head, and the handheld weapon is hidden in driver and gunner
+    seats.
   - `vr.diag_drive_seconds` seats you as a driver for unattended tests; spawn a vehicle first
     with `cheat_all_vehicles`.
   - Untested on the device.
@@ -455,7 +469,7 @@ the Frame's display at 72 Hz, which Halo held before.
 | 3 | General jitter, pop-in at the edges | Explained by the half rate above; no fix yet beyond 72 Hz |
 | 4 | The menu jitters up and down when opened | Menus are on a world-locked panel. **Not yet worn** |
 | 5 | Getting into the Warthog is unsmooth | code-ea (the eased seat view) |
-| 6 | Steering with one stick and gas on the other | Options to choose from (mockup); nothing built |
+| 6 | Steering with one stick and gas on the other | The user chose A, C and D: built as `vr.vehicle_steering` "drive" (the default), "wheel", and the Banshee flying by hand with either. **Not yet worn** |
 | 7 | Holding X went to third person | Not explained by the log, and the director keeps first person in seats with `vr.vehicle_view` "first_person". Physical X sends Black (switch grenades) and Halo's prompts say "X" for Action: a face-button option is in the same mockup. Turn on `vr.diag_buttons` for the next wear to catch it |
 | 8 | No laser in menus | A beam and a dot over the panel. **Not yet worn** |
 | 9 | QUIT TO STEAM in the VR settings | Removed |

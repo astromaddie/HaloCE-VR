@@ -162,6 +162,15 @@ unsigned int vr_take_actions(void);
 int vr_weapon_hand(void);
 /* 1 while the gun is held in both hands */
 int vr_two_handed(void);
+/* ---------- driving (vr.vehicle_steering "drive" and "wheel") */
+
+/* this frame's driving from the hands: `steer` -1 (left) to 1 (right) from
+the left stick's sideways, or with `allow_wheel` and both grips held (the
+hands on the wheel) from the turn of the line between them; then `wheel` is
+1 and `pedals` the triggers, -1 (left: brake, reverse) to 1 (right: gas).
+0 without a tracked frame */
+int vr_drive_input(int allow_wheel, float *steer, float *pedals, int *wheel);
+
 /* ---------- room-scale (vr.roomscale)
 
 Walking about the room walks the player: each tick on foot the player is

@@ -151,8 +151,8 @@ static struct vr_menu_setting
 	{ "ROOM-SCALE", "vr.roomscale", _vr_setting_boolean, 2, 0, { { "OFF", "false" }, { "ON", "true" } } },
 	{ "SCOPE", "vr.scope", _vr_setting_boolean, 2, 0, { { "ON", "true" }, { "OFF", "false" } } },
 	{ "VEHICLES", "vr.vehicle_view", _vr_setting_string, 2, 0, { { "INSIDE", "first_person" }, { "CHASE", "chase" } } },
-	{ "STEERING", "vr.vehicle_steering", _vr_setting_string, 3, 0,
-		{ { "STICK", "stick" }, { "HEAD", "head" }, { "HAND", "hand" } } },
+	{ "STEERING", "vr.vehicle_steering", _vr_setting_string, 4, 0,
+		{ { "DRIVE", "drive" }, { "WHEEL", "wheel" }, { "STICK", "stick" }, { "HAND", "hand" } } },
 	{ "CUTSCENES", "vr.cinema_3d", _vr_setting_boolean, 2, 0, { { "3D", "true" }, { "FLAT", "false" } } },
 	{ "MORE...", NULL, _vr_setting_page, 1, 0, { { "", "" } } },
 	/* the second page: the HUD and the body */

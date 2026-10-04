@@ -267,7 +267,7 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
-	{ "vr.settings_version", _config_integer, "3", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
+	{ "vr.settings_version", _config_integer, "4", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
 		"The version of these settings' meaning, kept by the game to bring an\n"
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
 		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
@@ -340,10 +340,16 @@ static const struct config_setting config_settings[] =
 	{ "vr.vehicle_view", _config_string, "\"first_person\"", "HALO_VR_VEHICLE_VIEW", _environment_value, _platform_vr,
 		"Vehicles seen from the seat, turning with the vehicle and the horizon\n"
 		"kept level (\"first_person\"), or from the game's chase camera (\"chase\")." },
-	{ "vr.vehicle_steering", _config_string, "\"stick\"", "HALO_VR_VEHICLE_STEERING", _environment_value, _platform_vr,
-		"What a driver steers with: \"stick\" (the right stick, as on a flat\n"
-		"screen; the head only looks), \"head\" (where you look) or \"hand\" (where\n"
-		"the right controller points). Gunners aim with the head." },
+	{ "vr.vehicle_steering", _config_string, "\"drive\"", "HALO_VR_VEHICLE_STEERING", _environment_value, _platform_vr,
+		"What a driver steers with. \"drive\": the left stick, sideways steering\n"
+		"in proportion and forward and back the gas and reverse, the head free to\n"
+		"look. \"wheel\": as drive, and in a Warthog with both grips held your\n"
+		"hands turn the wheel and the triggers are gas (right) and brake (left).\n"
+		"With either, the Banshee flies where your hand points and the Scorpion\n"
+		"drives as in the game, its cannon aimed by the head. \"stick\" (the right\n"
+		"stick steers, as on a flat screen), \"head\" (where you look) and\n"
+		"\"hand\" (where the right controller points) apply to every vehicle.\n"
+		"Gunners aim with the head." },
 	{ "vr.arms", _config_string, "\"ik\"", "HALO_VR_ARMS", _environment_value, _platform_vr,
 		"With vr.aim \"hand\": the first-person arms. \"ik\" reaches them from the\n"
 		"shoulders to the hands (the left to the left controller, or to the gun\n"
@@ -990,7 +996,15 @@ static void config_clamp_ranges(void)
 /* ---------- versions */
 
 /* the meaning of the VR settings now (vr.settings_version) */
-#define CONFIG_VR_SETTINGS_VERSION 3
+#define CONFIG_VR_SETTINGS_VERSION 4
+
+/* a string setting's value in memory, "" for none */
+static const char *config_string_value(const char *name)
+{
+	long index = config_setting_index(name);
+
+	return index >= 0 && config_values[index].string ? config_values[index].string : "";
+}
 
 /* sets a setting's value in memory from text */
 static void config_set_value(const char *name, const char *text)
@@ -1016,7 +1030,9 @@ out. A file with no vr.snap_turn gets the defaults (added with the rest).
 2 to 3: vr.resolution_scale at the old default 1.5 becomes the new 1.25: the
 eyes' images are now drawn at the render size (no longer shrunk to the
 recommended 1728), so 1.25 (2160, about the Frame's panels) is sharper than
-the old 1.5 was, and leaves outdoor levels the frame time 90 Hz needs. */
+the old 1.5 was, and leaves outdoor levels the frame time 90 Hz needs.
+3 to 4: vr.vehicle_steering at the old default "stick" becomes the new
+"drive" (the left stick drives; the two-stick driving was found bad worn). */
 static char *config_migrate(const char *text, toml_datum_t table)
 {
 	static const struct { const char *name; double old_default; } hud[] =
@@ -1122,8 +1138,19 @@ static char *config_migrate(const char *text, toml_datum_t table)
 			}
 		}
 	}
-	config_set_value("vr.settings_version", "3");
-	edited = config_edit_text(result ? result : text, "vr.settings_version", "3");
+	if (found < 4 && !strcmp(config_string_value("vr.vehicle_steering"), "stick"))
+	{
+		edited = config_edit_text(result ? result : text, "vr.vehicle_steering", "\"drive\"");
+		if (edited)
+		{
+			free(result);
+			result = edited;
+			config_set_value("vr.vehicle_steering", "drive");
+			platform_log("settings: vr.vehicle_steering was the old default \"stick\": now \"drive\"");
+		}
+	}
+	config_set_value("vr.settings_version", "4");
+	edited = config_edit_text(result ? result : text, "vr.settings_version", "4");
 	if (edited)
 	{
 		free(result);

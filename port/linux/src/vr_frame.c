@@ -1197,6 +1197,7 @@ static void synthesize_views(void)
 {
 	static const float fov[2][4] = { { -1.028f, 0.885f, 0.864f, -1.048f }, { -0.885f, 1.028f, 0.864f, -1.048f } };
 	float yaw[4], look[4];
+	float walk[3] = { 0.0f, 0.0f, 0.0f };
 	int eye;
 
 	if (vr.sweep_count > 0)
@@ -1208,9 +1209,6 @@ static void synthesize_views(void)
 	yaw[1] = sinf(vr.diag_yaw * 0.5f);
 	yaw[2] = 0.0f;
 	yaw[3] = cosf(vr.diag_yaw * 0.5f);
-
-	float walk[3] = { 0.0f, 0.0f, 0.0f };
-
 	/* vr.diag_walk_speed: the head walking ahead, metres a second */
 	if (vr.diag_walk_speed != 0.0f)
 	{
@@ -1389,6 +1387,62 @@ static void head_offset(float out[3])
 	out[0] = head[0] * scale;
 	out[1] = head[1] * scale;
 	out[2] = head[2] * scale;
+}
+
+/* ---------- driving */
+
+/* the left stick's dead zone, the rest of its travel stretched to 0..1 */
+#define DRIVE_STICK_DEAD_ZONE 0.15f
+/* the wheel: the hands this far apart at least; a quarter turn is full lock */
+#define DRIVE_WHEEL_MINIMUM_SPAN 0.15f
+#define DRIVE_WHEEL_FULL_LOCK 1.5707964f
+
+int vr_drive_input(int allow_wheel, float *steer, float *pedals, int *wheel)
+{
+	float x = vr.frame.thumb[0];
+
+	*steer = 0.0f;
+	*pedals = 0.0f;
+	*wheel = 0;
+	if (!vr.active || !(vr.frame.flags & HALO_XR_FRAME_FOCUSED))
+		return 0;
+	if (allow_wheel && vr.grip_held[0] && vr.grip_held[1] &&
+		(vr.frame.hand_valid[0] & 1) && (vr.frame.hand_valid[1] & 1))
+	{
+		static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
+		float forward[3], right[2], across[3], horizontal, sideways, angle;
+		int axis;
+
+		/* the line from the left hand to the right, seen from the driver's
+		seat: level is straight ahead, the right hand lower is a right
+		turn (measured across the head's heading, so leaning doesn't steer) */
+		rotate(vr.frame.head.orientation, xr_forward, forward);
+		horizontal = sqrtf(forward[0] * forward[0] + forward[2] * forward[2]);
+		if (horizontal > 1e-3f)
+		{
+			right[0] = -forward[2] / horizontal;
+			right[1] = forward[0] / horizontal;
+			for (axis = 0; axis < 3; axis++)
+				across[axis] = vr.frame.grip[1].position[axis] - vr.frame.grip[0].position[axis];
+			sideways = across[0] * right[0] + across[2] * right[1];
+			if (sideways * sideways + across[1] * across[1] > DRIVE_WHEEL_MINIMUM_SPAN * DRIVE_WHEEL_MINIMUM_SPAN)
+			{
+				angle = atan2f(-across[1], sideways);
+				*steer = angle / DRIVE_WHEEL_FULL_LOCK;
+				if (*steer > 1.0f) *steer = 1.0f;
+				if (*steer < -1.0f) *steer = -1.0f;
+				*pedals = vr.frame.trigger[1] - vr.frame.trigger[0];
+				*wheel = 1;
+				return 1;
+			}
+		}
+	}
+	if (fabsf(x) < DRIVE_STICK_DEAD_ZONE)
+		x = 0.0f;
+	else
+		x = (x - (x > 0.0f ? DRIVE_STICK_DEAD_ZONE : -DRIVE_STICK_DEAD_ZONE)) / (1.0f - DRIVE_STICK_DEAD_ZONE);
+	*steer = x;
+	return 1;
 }
 
 /* ---------- room-scale (vr.roomscale), after the PC mod HaloCEVR's: each
