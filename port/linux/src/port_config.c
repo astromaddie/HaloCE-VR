@@ -267,7 +267,7 @@ static const struct config_setting config_settings[] =
 	{ "vr.enabled", _config_boolean, "true", "HALO_VR", _environment_value, _platform_vr,
 		"Play in the headset (OpenXR); false shows the game on the flat screen\n"
 		"as the phone build does." },
-	{ "vr.settings_version", _config_integer, "2", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
+	{ "vr.settings_version", _config_integer, "3", "HALO_VR_SETTINGS_VERSION", _environment_value, _platform_vr,
 		"The version of these settings' meaning, kept by the game to bring an\n"
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
 		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
@@ -275,10 +275,12 @@ static const struct config_setting config_settings[] =
 	{ "vr.texture_anisotropy", _config_integer, "8", "HALO_VR_TEXTURE_ANISOTROPY", _environment_value, _platform_vr,
 		"Anisotropic filtering for the game's textures in the headset, 1 (off)\n"
 		"to 16: keeps floors and walls sharp seen at a slant." },
-	{ "vr.resolution_scale", _config_real, "1.5", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
+	{ "vr.resolution_scale", _config_real, "1.25", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
 		"The game's picture in the headset as a fraction of the runtime's\n"
-		"recommended eye resolution (1728x1728 on the Steam Frame), 0.75 to 1.5;\n"
-		"1.5 (2592x2592) holds 72 frames a second on the Steam Frame." },
+		"recommended eye resolution (1728x1728 on the Steam Frame), 0.75 to 1.5.\n"
+		"1.25 (2160x2160, about the Frame's panels) is sharp; open levels such\n"
+		"as The Silent Cartographer need it (or 1.0) for 90 Hz. 1.5 holds 72 Hz\n"
+		"indoors." },
 	{ "vr.screen_distance", _config_real, "2.5", "HALO_VR_SCREEN_DISTANCE", _environment_value, _platform_vr,
 		"How far ahead the flat screen (menus, cutscenes) floats, in metres." },
 	{ "vr.screen_width", _config_real, "2.4", "HALO_VR_SCREEN_WIDTH", _environment_value, _platform_vr,
@@ -988,7 +990,7 @@ static void config_clamp_ranges(void)
 /* ---------- versions */
 
 /* the meaning of the VR settings now (vr.settings_version) */
-#define CONFIG_VR_SETTINGS_VERSION 2
+#define CONFIG_VR_SETTINGS_VERSION 3
 
 /* sets a setting's value in memory from text */
 static void config_set_value(const char *name, const char *text)
@@ -1010,7 +1012,11 @@ now 0 (the HUD mode's own), as an old default would otherwise override the
 near and leash modes.
 1 to 2: vr.snap_turn (degrees of a snap turn, 0 for smooth) is replaced by
 vr.turn_mode and vr.snap_angle; those are written from it, and it is commented
-out. A file with no vr.snap_turn gets the defaults (added with the rest). */
+out. A file with no vr.snap_turn gets the defaults (added with the rest).
+2 to 3: vr.resolution_scale at the old default 1.5 becomes the new 1.25: the
+eyes' images are now drawn at the render size (no longer shrunk to the
+recommended 1728), so 1.25 (2160, about the Frame's panels) is sharper than
+the old 1.5 was, and leaves outdoor levels the frame time 90 Hz needs. */
 static char *config_migrate(const char *text, toml_datum_t table)
 {
 	static const struct { const char *name; double old_default; } hud[] =
@@ -1100,8 +1106,24 @@ static char *config_migrate(const char *text, toml_datum_t table)
 		}
 		platform_log("settings: vr.snap_turn %g is now vr.turn_mode \"%s\", vr.snap_angle %s", degrees, mode, angle);
 	}
-	config_set_value("vr.settings_version", "2");
-	edited = config_edit_text(result ? result : text, "vr.settings_version", "2");
+	if (found < 3)
+	{
+		long index = config_setting_index("vr.resolution_scale");
+
+		if (index >= 0 && config_values[index].real == 1.5)
+		{
+			edited = config_edit_text(result ? result : text, "vr.resolution_scale", "1.25");
+			if (edited)
+			{
+				free(result);
+				result = edited;
+				config_values[index].real = 1.25;
+				platform_log("settings: vr.resolution_scale was the old default 1.5: now 1.25");
+			}
+		}
+	}
+	config_set_value("vr.settings_version", "3");
+	edited = config_edit_text(result ? result : text, "vr.settings_version", "3");
 	if (edited)
 	{
 		free(result);

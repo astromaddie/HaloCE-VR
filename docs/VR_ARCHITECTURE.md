@@ -350,7 +350,7 @@ along it as walking does. Then that place to stand moves to the head.
 
 ## Settings (`config.toml`, `[vr]`)
 
-`enabled`, `stereo`, `resolution_scale` (1.5), `refresh_rate` (90), `world_scale` (0.328084 units/m),
+`enabled`, `stereo`, `resolution_scale` (1.25), `refresh_rate` (90), `world_scale` (0.328084 units/m),
 `cinema_3d`, `cinema_separation`, `cinema_convergence`, `cinema_distance`, `cinema_width`, `arms`
 ("ik" / "hidden" / "animated"), `visibility_mask` (on: the runtime's hidden area masked first in each eye, about 15% of its
 pixels unshaded), `body` ("off" / "legs" / "torso": on foot the player's own hips and legs, or also the
@@ -459,6 +459,6 @@ the Frame's display at 72 Hz, which Halo held before.
 | 7 | Holding X went to third person | Not explained by the log, and the director keeps first person in seats with `vr.vehicle_view` "first_person". Physical X sends Black (switch grenades) and Halo's prompts say "X" for Action: a face-button option is in the same mockup. Turn on `vr.diag_buttons` for the next wear to catch it |
 | 8 | No laser in menus | A beam and a dot over the panel. **Not yet worn** |
 | 9 | QUIT TO STEAM in the VR settings | Removed |
-| 10 | The image isn't sharp | Eye images at the render size, anisotropic filtering. **Not yet worn** |
+| 10 | The image isn't sharp | Eye images at the render size, anisotropic filtering, and `vr.resolution_scale` 1.25 by default (2160 square, about the panels; settings version 3 moves an untouched 1.5 to it), which should also give open levels the frame time for 90 Hz. **Not yet worn** |
 | Wish | An immersive main menu around the ring | Not started. The menu scene has no player window, so it needs its own stereo path; the world-locked menu panel above is the piece it was missing |
 
