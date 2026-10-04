@@ -1832,7 +1832,8 @@ On foot the neck, kept, rose toward the eyes: there it goes */
 static boolean vr_body_node_hidden(
 	struct model *model,
 	short node_index,
-	boolean seated)
+	boolean seated,
+	boolean seated_arms_hidden)
 {
 	boolean legs = !seated && vr_render_body_setting() == _vr_body_legs;
 
@@ -1843,8 +1844,8 @@ static boolean vr_body_node_hidden(
 		struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, node_index, struct model_node);
 
 		if (strstr(node->name, "head") ||
-			(!seated && (strstr(node->name, "neck") || strstr(node->name, "clavicle") ||
-				strstr(node->name, "upperarm"))) ||
+			(!seated && strstr(node->name, "neck")) ||
+			((!seated || seated_arms_hidden) && (strstr(node->name, "clavicle") || strstr(node->name, "upperarm"))) ||
 			(legs && strstr(node->name, "spine")))
 			return TRUE;
 		node_index = node->parent_node_index;
@@ -2077,7 +2078,8 @@ static void vr_body_seat_lean_back(
 	struct model *model,
 	real_matrix4x3 *matrices,
 	short node_count,
-	long vehicle_index)
+	long vehicle_index,
+	boolean arms_hidden)
 {
 	static char const *const arm_names[2][3] =
 	{
@@ -2186,7 +2188,7 @@ static void vr_body_seat_lean_back(
 			matrices[index].position.z += back.k;
 		}
 	}
-	for (side = 0; side < 2; side++)
+	for (side = 0; side < 2 && !arms_hidden; side++)
 	{
 		short upper = arms[side][0], fore = arms[side][1], hand = arms[side][2];
 		real_vector3d pole;
@@ -2247,6 +2249,17 @@ void vr_render_body_nodes(
 	long model_index = object_definition_get(object->definition_index)->object.model.index;
 	struct model *model = model_index != NONE ? model_definition_get(model_index) : NULL;
 	boolean seated = object->object.parent_object_index != NONE;
+	/* in a Banshee the game's own animation has the arms reach out over its
+	nose, the hands in the air (its model has no grips to put them on):
+	there the arms go, the prone body stays */
+	boolean seated_arms_hidden = FALSE;
+
+	if (seated)
+	{
+		char const *vehicle_name = tag_get_name(object_get(object->object.parent_object_index)->definition_index);
+
+		seated_arms_hidden = vehicle_name && strstr(vehicle_name, "banshee");
+	}
 	real units = vr_units_per_metre();
 	real_vector3d body_forward, head_forward, shift;
 	real rotation[3][3], c, s, back;
@@ -2263,7 +2276,7 @@ void vr_render_body_nodes(
 			struct model_node const *node = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node);
 
 			platform_log("vr: body node %d '%s' parent %d%s", index, node->name, node->parent_node_index,
-				vr_body_node_hidden(model, index, seated) ? " (hidden)" : "");
+				vr_body_node_hidden(model, index, seated, seated_arms_hidden) ? " (hidden)" : "");
 		}
 	}
 	/* no head, neck or arms: each hidden bone shrunk to nothing at the
@@ -2272,11 +2285,11 @@ void vr_render_body_nodes(
 	were (spikes across the view) */
 	for (index = 0; index < node_count && index < model->nodes.count; index++)
 	{
-		if (vr_body_node_hidden(model, index, seated))
+		if (vr_body_node_hidden(model, index, seated, seated_arms_hidden))
 		{
 			short kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, index, struct model_node)->parent_node_index;
 
-			while (kept >= 0 && kept < node_count && vr_body_node_hidden(model, kept, seated))
+			while (kept >= 0 && kept < node_count && vr_body_node_hidden(model, kept, seated, seated_arms_hidden))
 				kept = TAG_BLOCK_GET_ELEMENT(&model->nodes, kept, struct model_node)->parent_node_index;
 			if (kept >= 0 && kept < node_count)
 				matrices[index].position = matrices[kept].position;
@@ -2296,7 +2309,7 @@ void vr_render_body_nodes(
 			log_hands = config_boolean("vr.diag_body_log");
 		}
 		if (!raw)
-			vr_body_seat_lean_back(model, matrices, node_count, object->object.parent_object_index);
+			vr_body_seat_lean_back(model, matrices, node_count, object->object.parent_object_index, seated_arms_hidden);
 		if (log_hands)
 			vr_body_log_hands(object, model, matrices, node_count);
 		return;
