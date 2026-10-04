@@ -33,8 +33,9 @@ static struct
 	/* the runtime's frame begun and not yet ended, and its state */
 	int frame_begun;
 	struct halo_xr_frame frame;
-	/* the eye render size (vr.resolution_scale) */
+	/* the eye render size, and the eyes' images' (vr.resolution_scale) */
 	int eye_size;
+	unsigned int resolution_percent;
 	int srgb_write_control;
 	/* the flat screen (vr.screen_distance, vr.screen_width), metres */
 	float screen_distance, screen_width;
@@ -126,6 +127,11 @@ static struct
 	B's state */
 	float pointer_hit[3], pointer_orientation[4], pointer_distance;
 	int pointer_age;
+	/* a menu is up (vr_ui_pointer; frames since it was last seen, 0 none),
+	and its panel in LOCAL space: in stereo the HUD's image moves there,
+	held in the room, while a menu is up */
+	int menu_age;
+	struct halo_xr_pose menu_pose;
 	short pointer_x, pointer_y;
 	int pointer_trigger, pointer_back;
 	/* the scope (vr.scope, vr.scope_size): its image this frame, and its
@@ -328,7 +334,14 @@ void vr_initialize(void)
 		return;
 	}
 	/* the flat screen and HUD layer: the game's 640x480 at twice the size */
-	if (host_xr_init(&vr.info, 1280, 960) != 0)
+	{
+		double scale = config_real("vr.resolution_scale");
+
+		if (scale < 0.75) scale = 0.75;
+		if (scale > 1.5) scale = 1.5;
+		vr.resolution_percent = (unsigned int)(scale * 100.0 + 0.5);
+	}
+	if (host_xr_init(&vr.info, 1280, 960, vr.resolution_percent) != 0)
 	{
 #ifdef HALO_ANDROID
 		/* (Lepton has no flat screen to fall back on: the frames posted to
@@ -342,13 +355,9 @@ void vr_initialize(void)
 #endif
 	}
 	glGenFramebuffers(1, &vr.framebuffer);
-	{
-		double scale = config_real("vr.resolution_scale");
-
-		if (scale < 0.75) scale = 0.75;
-		if (scale > 1.5) scale = 1.5;
-		vr.eye_size = (int)(vr.info.width[HALO_XR_SWAPCHAIN_LEFT] * scale) & ~1;
-	}
+	/* the eyes' images are as large as they are drawn (vr.resolution_scale,
+	within the runtime's maximum) */
+	vr.eye_size = (int)vr.info.width[HALO_XR_SWAPCHAIN_LEFT] & ~1;
 	/* the swapchains are sRGB and the game's picture is gamma-encoded
 	already: written without conversion, the compositor shows it as it is */
 	vr.srgb_write_control = host_gl_has_extension("GL_EXT_sRGB_write_control");
@@ -512,6 +521,15 @@ static float wrap_angle(float angle);
 
 static void rotate(const float q[4], const float v[3], float out[3]);
 static void to_halo(const float v[3], float cosine, float sine, float out[3]);
+static void place_panel(struct halo_xr_pose *pose, float distance);
+
+/* a menu's panel in stereo (the cross-port standard): held in the room,
+2 m ahead where the head faced as the menu came up, about 50 degrees
+across; and whether a menu is up (seen by vr_ui_pointer in the last few
+frames) */
+#define VR_MENU_PANEL_DISTANCE 2.0f
+#define VR_MENU_PANEL_WIDTH 1.9f
+#define menu_up() (vr.menu_age > 0 && vr.menu_age <= 3)
 static void look_rotation(const float forward[3], const float up[3], float out[4]);
 static void multiply(const float a[4], const float b[4], float out[4]);
 
@@ -951,8 +969,11 @@ static int frame_begin(void)
 		vr.room_previous[0] = vr.room_now[0] = vr.frame.head.position[0];
 		vr.room_previous[1] = vr.room_now[1] = vr.frame.head.position[2];
 		vr.room_held = 1;
-		/* the leash's panel comes back ahead of where the head faces */
+		/* the leash's panel comes back ahead of where the head faces, and so
+		does a menu's */
 		vr.hud_yaw_valid = 0;
+		if (menu_up())
+			place_panel(&vr.menu_pose, VR_MENU_PANEL_DISTANCE);
 	}
 	layout_controls();
 	update_gestures();
@@ -2384,30 +2405,19 @@ int vr_ui_pointer(int menus_active, struct halo_ui_pointer *pointer)
 	if (!vr.active || !menus_active)
 	{
 		vr.pointer_age = 0;
+		vr.menu_age = 0;
 		return 0;
 	}
+	/* a menu coming up in stereo gets its panel where the head faces */
+	if (!menu_up())
+		place_panel(&vr.menu_pose, VR_MENU_PANEL_DISTANCE);
+	vr.menu_age = 1;
 	/* the screen the menus are on: the flat screen, or in stereo (the
-	pause menu) the HUD's panel ahead of the head */
+	pause menu) the menu's panel */
 	if (vr.mode == VR_MODE_STEREO)
 	{
-		if (vr.hud_mode == VR_HUD_FAR)
-		{
-			static const float ahead[3] = { 0.0f, 0.0f, -1.0f };
-			float offset[3];
-			int axis;
-
-			rotate(vr.frame.head.orientation, ahead, offset);
-			memcpy(screen.orientation, vr.frame.head.orientation, sizeof(screen.orientation));
-			for (axis = 0; axis < 3; axis++)
-				screen.position[axis] = vr.frame.head.position[axis] + offset[axis] * vr.hud_distance;
-		}
-		else
-		{
-			/* (the panel as this frame's render, or the last, placed it) */
-			update_hud_panel();
-			screen = vr.hud_pose;
-		}
-		width = vr.hud_width;
+		screen = vr.menu_pose;
+		width = VR_MENU_PANEL_WIDTH;
 	}
 	else if (vr.mode == VR_MODE_FLAT)
 	{
@@ -2457,21 +2467,48 @@ int vr_ui_pointer(int menus_active, struct halo_ui_pointer *pointer)
 	return 1;
 }
 
-/* the pointer's dot, on the reticle's layer, a few centimetres off the
-screen toward the hand */
+/* the pointer (the cross-port standard: a thin beam and a dot): the dot a
+centimetre off the screen toward the hand, and the beam from the hand to
+it, turned about its length to face the head. Both on layers over the
+screen's (the compositor has no depth to put them in front) */
 static void place_pointer(struct halo_xr_layers *layers)
 {
 	static const float toward[3] = { 0.0f, 0.0f, 1.0f };
-	float out[3];
+	const struct halo_xr_pose *aim = &vr.frame.aim[vr.weapon_hand];
+	float out[3], along[3], facing[3], length, dot;
 	int axis;
 
 	draw_reticle();
 	rotate(vr.pointer_orientation, toward, out);
 	for (axis = 0; axis < 3; axis++)
-		layers->reticle_pose.position[axis] = vr.pointer_hit[axis] + out[axis] * 0.02f;
-	memcpy(layers->reticle_pose.orientation, vr.pointer_orientation, sizeof(layers->reticle_pose.orientation));
-	layers->reticle_size[0] = layers->reticle_size[1] = 0.012f * vr.pointer_distance;
-	layers->flags |= HALO_XR_LAYER_RETICLE;
+		layers->pointer_pose.position[axis] = vr.pointer_hit[axis] + out[axis] * 0.01f;
+	memcpy(layers->pointer_pose.orientation, vr.pointer_orientation, sizeof(layers->pointer_pose.orientation));
+	/* (the image's dot is a third of it across: about 0.6 degrees) */
+	layers->pointer_size[0] = layers->pointer_size[1] = 0.03f * vr.pointer_distance;
+	layers->flags |= HALO_XR_LAYER_POINTER;
+	if (!(vr.frame.hand_valid[vr.weapon_hand] & 2))
+		return;
+	for (axis = 0; axis < 3; axis++)
+		along[axis] = layers->pointer_pose.position[axis] - aim->position[axis];
+	length = sqrtf(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
+	if (length < 0.05f)
+		return;
+	for (axis = 0; axis < 3; axis++)
+	{
+		along[axis] /= length;
+		layers->beam_pose.position[axis] = aim->position[axis] + along[axis] * length * 0.5f;
+		facing[axis] = vr.frame.head.position[axis] - layers->beam_pose.position[axis];
+	}
+	/* the beam's face toward the head, square to its length */
+	dot = facing[0] * along[0] + facing[1] * along[1] + facing[2] * along[2];
+	for (axis = 0; axis < 3; axis++)
+		facing[axis] = -(facing[axis] - along[axis] * dot);
+	if (facing[0] * facing[0] + facing[1] * facing[1] + facing[2] * facing[2] < 1e-8f)
+		return;
+	look_rotation(facing, along, layers->beam_pose.orientation);
+	layers->beam_size[0] = 0.016f;
+	layers->beam_size[1] = length;
+	layers->flags |= HALO_XR_LAYER_BEAM;
 }
 
 /* ---------- the scope */
@@ -2615,22 +2652,27 @@ static void place_scope(struct halo_xr_layers *layers)
 /* and how long it stays black before */
 #define VR_FADE_HOLD_SECONDS 0.25f
 
-/* the screen `distance` metres ahead of where the head faces, upright, at
-the head's height */
-static void place_screen(float distance)
+/* a panel `distance` metres ahead of where the head faces, upright, at the
+head's height */
+static void place_panel(struct halo_xr_pose *pose, float distance)
 {
 	static const float xr_forward[3] = { 0.0f, 0.0f, -1.0f };
 	float forward[3], yaw;
 
 	rotate(vr.frame.head.orientation, xr_forward, forward);
 	yaw = (forward[0] * forward[0] + forward[2] * forward[2] > 1e-4f) ? atan2f(-forward[0], -forward[2]) : 0.0f;
-	vr.screen_pose.orientation[0] = 0.0f;
-	vr.screen_pose.orientation[1] = sinf(yaw * 0.5f);
-	vr.screen_pose.orientation[2] = 0.0f;
-	vr.screen_pose.orientation[3] = cosf(yaw * 0.5f);
-	vr.screen_pose.position[0] = vr.frame.head.position[0] - sinf(yaw) * distance;
-	vr.screen_pose.position[1] = vr.frame.head.position[1];
-	vr.screen_pose.position[2] = vr.frame.head.position[2] - cosf(yaw) * distance;
+	pose->orientation[0] = 0.0f;
+	pose->orientation[1] = sinf(yaw * 0.5f);
+	pose->orientation[2] = 0.0f;
+	pose->orientation[3] = cosf(yaw * 0.5f);
+	pose->position[0] = vr.frame.head.position[0] - sinf(yaw) * distance;
+	pose->position[1] = vr.frame.head.position[1];
+	pose->position[2] = vr.frame.head.position[2] - cosf(yaw) * distance;
+}
+
+static void place_screen(float distance)
+{
+	place_panel(&vr.screen_pose, distance);
 }
 
 /* the fade layer's image: black, `amount` opaque (premultiplied) */
@@ -2720,21 +2762,50 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 		if (copy_hud(texture))
 		{
 			layers.flags |= HALO_XR_LAYER_QUAD | HALO_XR_LAYER_QUAD_ALPHA;
-			if (vr.hud_mode == VR_HUD_FAR)
+			layers.quad_size[0] = vr.hud_width;
+			if (menu_up())
+			{
+				/* a menu (the pause menu, the VR settings): held in the room
+				where the head faced as it came up, not following the head */
+				layers.quad_pose = vr.menu_pose;
+				layers.quad_size[0] = VR_MENU_PANEL_WIDTH;
+			}
+			else if (vr.hud_mode == VR_HUD_FAR)
 			{
 				/* head-locked, in VIEW space: exactly where the HUD pass drew from */
 				layers.flags |= HALO_XR_LAYER_QUAD_HEAD_LOCKED;
 				layers.quad_pose.position[2] = -vr.hud_distance;
 				layers.quad_pose.orientation[3] = 1.0f;
 			}
+			else if (vr.hud_mode == VR_HUD_NEAR)
+			{
+				/* head-locked too, in VIEW space (a LOCAL quad posed each frame
+				from the predicted head lags it whenever the compositor shows a
+				frame twice or late, and judders as the head turns), turned
+				back by the head's roll so that it stays upright: it follows
+				the head's yaw and pitch, never its roll */
+				static const float xr_up[3] = { 0.0f, 1.0f, 0.0f };
+				float inverse[4], up[3], roll;
+
+				inverse[0] = -vr.frame.head.orientation[0];
+				inverse[1] = -vr.frame.head.orientation[1];
+				inverse[2] = -vr.frame.head.orientation[2];
+				inverse[3] = vr.frame.head.orientation[3];
+				rotate(inverse, xr_up, up);
+				roll = (up[0] * up[0] + up[1] * up[1] > 1e-4f) ? atan2f(-up[0], up[1]) : 0.0f;
+				layers.flags |= HALO_XR_LAYER_QUAD_HEAD_LOCKED;
+				layers.quad_pose.position[2] = -vr.hud_distance;
+				layers.quad_pose.orientation[2] = sinf(roll * 0.5f);
+				layers.quad_pose.orientation[3] = cosf(roll * 0.5f);
+			}
 			else
 			{
-				/* held in LOCAL space, at the head's place and the panel's turn */
+				/* the leash: held in LOCAL space, at the head's place and the
+				panel's turn */
 				update_hud_panel();
 				layers.quad_pose = vr.hud_pose;
 			}
-			layers.quad_size[0] = vr.hud_width;
-			layers.quad_size[1] = vr.hud_width * 0.75f;
+			layers.quad_size[1] = layers.quad_size[0] * 0.75f;
 		}
 		if (vr.hand_aiming && vr.reticle_distance > 0.0f && (vr.frame.hand_valid[vr.weapon_hand] & 2))
 		{
@@ -2768,13 +2839,15 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 	}
 	/* the menus' pointer, while it meets their screen (unless the hand's
 	reticle has the layer) */
-	if (vr.pointer_age > 0 && vr.pointer_age <= 2 && !(layers.flags & HALO_XR_LAYER_RETICLE) &&
+	if (vr.pointer_age > 0 && vr.pointer_age <= 2 &&
 		(layers.flags & (HALO_XR_LAYER_QUAD | HALO_XR_LAYER_PROJECTION)))
 	{
 		place_pointer(&layers);
 	}
 	if (vr.pointer_age > 0)
 		vr.pointer_age++;
+	if (vr.menu_age > 0)
+		vr.menu_age++;
 	if (vr.fade > 0.0f && (vr.frame.flags & HALO_XR_FRAME_SHOULD_RENDER))
 	{
 		draw_fade(vr.fade);

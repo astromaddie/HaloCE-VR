@@ -120,7 +120,10 @@ struct halo_xr_frame;
 struct halo_xr_layers;
 /* creates the session for the current GL context, with a quad swapchain
 of the size given; 0 on success */
-int host_xr_init(struct halo_xr_info *info, unsigned int quad_width, unsigned int quad_height);
+/* eye_scale_percent: the eyes' images as a percentage of the runtime's
+recommended size (limited to its maximum) */
+int host_xr_init(struct halo_xr_info *info, unsigned int quad_width, unsigned int quad_height,
+	unsigned int eye_scale_percent);
 /* waits for and begins the runtime's next frame; 0 when none was begun
 (the session not running: it has polled and slept briefly) */
 int host_xr_begin_frame(struct halo_xr_frame *frame);

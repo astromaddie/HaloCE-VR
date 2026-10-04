@@ -866,7 +866,7 @@ static int choose_format(void)
 	return xr.color_format != 0;
 }
 
-int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_height)
+int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_height, uint32_t eye_scale_percent)
 {
 	XrViewConfigurationView views[2] = { { XR_TYPE_VIEW_CONFIGURATION_VIEW }, { XR_TYPE_VIEW_CONFIGURATION_VIEW } };
 	uint32_t view_count = 0;
@@ -914,10 +914,23 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 		uint32_t widths[3], heights[3], x = 0, height = 0;
 		int part;
 
-		widths[0] = views[0].recommendedImageRectWidth;
-		heights[0] = views[0].recommendedImageRectHeight;
-		widths[1] = views[1].recommendedImageRectWidth;
-		heights[1] = views[1].recommendedImageRectHeight;
+		/* each eye's image as large as the game draws it (the recommended
+		size scaled, within the maximum): the compositor samples that whole,
+		where an image at the recommended size would first shrink it by
+		a plain blit and soften it */
+		for (part = 0; part < 2; part++)
+		{
+			uint64_t scale = eye_scale_percent ? eye_scale_percent : 100;
+			uint32_t width = (uint32_t)(views[part].recommendedImageRectWidth * scale / 100) & ~1u;
+			uint32_t height = (uint32_t)(views[part].recommendedImageRectHeight * scale / 100) & ~1u;
+
+			if (views[part].maxImageRectWidth && width > views[part].maxImageRectWidth)
+				width = views[part].maxImageRectWidth & ~1u;
+			if (views[part].maxImageRectHeight && height > views[part].maxImageRectHeight)
+				height = views[part].maxImageRectHeight & ~1u;
+			widths[part] = width;
+			heights[part] = height;
+		}
 		widths[2] = quad_width;
 		heights[2] = quad_height;
 		for (part = 0; part < 3; part++)
@@ -958,9 +971,11 @@ int host_xr_init(struct halo_xr_info *out, uint32_t quad_width, uint32_t quad_he
 	xr.initialized = 1;
 	/* the runtime's GL binding brings its own contexts' trace markers */
 	host_gl_quiet_trace_markers();
-	host_logf(HOST_LOG_INFO, "[openxr] %s, %s: eyes %ux%u (max %ux%u), quad %ux%u, format 0x%llx, frame controller %s",
-		out->runtime, out->system, views[0].recommendedImageRectWidth, views[0].recommendedImageRectHeight,
-		views[0].maxImageRectWidth, views[0].maxImageRectHeight, quad_width, quad_height,
+	host_logf(HOST_LOG_INFO, "[openxr] %s, %s: eyes %ux%u (recommended %ux%u, max %ux%u), quad %ux%u, format 0x%llx, "
+		"frame controller %s",
+		out->runtime, out->system, xr.swapchains[HALO_XR_SWAPCHAIN_LEFT].width,
+		xr.swapchains[HALO_XR_SWAPCHAIN_LEFT].height, views[0].recommendedImageRectWidth,
+		views[0].recommendedImageRectHeight, views[0].maxImageRectWidth, views[0].maxImageRectHeight, quad_width, quad_height,
 		(long long)xr.color_format, xr.frame_controller ? "yes" : "no");
 describe:
 	out->color_format = xr.color_format;
@@ -1255,10 +1270,12 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	XrCompositionLayerProjection projection = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad quad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad reticle = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	XrCompositionLayerQuad beam = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	XrCompositionLayerQuad pointer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad screen[2] = { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
 	XrCompositionLayerQuad fade = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad scope = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *list[7];
+	const XrCompositionLayerBaseHeader *list[9];
 	XrFrameEndInfo end = { XR_TYPE_FRAME_END_INFO };
 	uint32_t count = 0;
 	int which;
@@ -1353,6 +1370,40 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 			local_pose(&layers->quad_pose, &quad.pose);
 		}
 		list[count++] = (const XrCompositionLayerBaseHeader *)&quad;
+	}
+	/* the menus' pointer over their panel (layers have no depth: drawn
+	after it, or the panel hides them): the beam, the reticle's middle row
+	stretched from the hand to the panel, then the dot where it lands */
+	if (layers && (layers->flags & HALO_XR_LAYER_BEAM) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
+
+		beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		beam.subImage.swapchain = swapchain->handle;
+		beam.subImage.imageRect.offset.y = (int32_t)(swapchain->height / 2);
+		beam.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		beam.subImage.imageRect.extent.height = 1;
+		beam.size.width = layers->beam_size[0];
+		beam.size.height = layers->beam_size[1];
+		beam.space = xr.local;
+		local_pose(&layers->beam_pose, &beam.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&beam;
+	}
+	if (layers && (layers->flags & HALO_XR_LAYER_POINTER) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
+
+		pointer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		pointer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		pointer.subImage.swapchain = swapchain->handle;
+		pointer.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		pointer.subImage.imageRect.extent.height = (int32_t)swapchain->height;
+		pointer.size.width = layers->pointer_size[0];
+		pointer.size.height = layers->pointer_size[1];
+		pointer.space = xr.local;
+		local_pose(&layers->pointer_pose, &pointer.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&pointer;
 	}
 	/* a weapon's scope, held in the hand: nearer than the HUD */
 	if (layers && (layers->flags & HALO_XR_LAYER_SCOPE) && xr.frame_state.shouldRender)

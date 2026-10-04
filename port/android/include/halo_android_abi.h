@@ -176,6 +176,10 @@ left Y), west and north the Frame's right X and Y. */
                                                at quad_pose and quad_size: a 3D screen */
 #define HALO_XR_LAYER_FADE 0x40u            /* the fade swapchain over everything, head-locked */
 #define HALO_XR_LAYER_SCOPE 0x80u           /* the scope swapchain at scope_pose (LOCAL), blended */
+#define HALO_XR_LAYER_POINTER 0x100u        /* the menus' pointer: the reticle swapchain's dot at pointer_pose
+                                               (LOCAL), over the quad */
+#define HALO_XR_LAYER_BEAM 0x200u           /* the pointer's beam: the reticle swapchain's middle row
+                                               stretched along beam_pose's y (LOCAL), over the quad */
 
 struct halo_xr_layers
 {
@@ -186,6 +190,10 @@ struct halo_xr_layers
 	float reticle_size[2];
 	struct halo_xr_pose scope_pose;
 	float scope_size[2];
+	struct halo_xr_pose pointer_pose;
+	float pointer_size[2];
+	struct halo_xr_pose beam_pose;
+	float beam_size[2];          /* across, along */
 };
 
 #ifdef __cplusplus
@@ -199,6 +207,6 @@ HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_info, x) == 312, "halo_xr_info.
 HALO_XR_ASSERT(sizeof(struct halo_xr_frame) == 304, "halo_xr_frame layout");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, head) == 24, "halo_xr_frame.head");
 HALO_XR_ASSERT(__builtin_offsetof(struct halo_xr_frame, buttons) == 260, "halo_xr_frame.buttons");
-HALO_XR_ASSERT(sizeof(struct halo_xr_layers) == 112, "halo_xr_layers layout");
+HALO_XR_ASSERT(sizeof(struct halo_xr_layers) == 184, "halo_xr_layers layout");
 
 #endif
