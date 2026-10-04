@@ -1957,6 +1957,72 @@ static void vr_body_reach(
 	vr_body_turn(model, matrices, node_count, fore, &elbow, rotation);
 }
 
+/* vr.diag_body_log: every two seconds in a seat, where each hand is and
+which of the vehicle's markers (its own and its parent's) is nearest it,
+and once a vehicle model's marker names */
+static void vr_body_log_hands(
+	struct object_datum *object,
+	struct model *model,
+	real_matrix4x3 const *matrices,
+	short node_count)
+{
+	static long last_tick = NONE, logged_vehicle_model = NONE;
+	static char const *const hands[2] = { " l hand", " r hand" };
+	long vehicle_index = object->object.parent_object_index;
+	long vehicle_model_index;
+	struct model *vehicle_model;
+	real units = vr_units_per_metre();
+	int side;
+
+	if (vehicle_index == NONE || (last_tick != NONE && game_time_get() - last_tick < 2 * TICKS_PER_SECOND))
+		return;
+	last_tick = game_time_get();
+	vehicle_model_index = object_definition_get(object_get(vehicle_index)->definition_index)->object.model.index;
+	if (vehicle_model_index == NONE)
+		return;
+	vehicle_model = model_definition_get(vehicle_model_index);
+	if (logged_vehicle_model != vehicle_model_index)
+	{
+		short index;
+
+		logged_vehicle_model = vehicle_model_index;
+		for (index = 0; index < vehicle_model->markers.count; index++)
+			platform_log("vr: vehicle marker '%s'",
+				TAG_BLOCK_GET_ELEMENT(&vehicle_model->markers, index, struct model_marker)->name);
+		for (index = 0; index < vehicle_model->nodes.count; index++)
+			platform_log("vr: vehicle node %d '%s'", index,
+				TAG_BLOCK_GET_ELEMENT(&vehicle_model->nodes, index, struct model_node)->name);
+	}
+	for (side = 0; side < 2; side++)
+	{
+		short hand = vr_body_find_node(model, hands[side]), index;
+		char const *nearest_name = "none";
+		real nearest = 1e9f;
+
+		if (hand == NONE || hand >= node_count)
+			continue;
+		for (index = 0; index < vehicle_model->markers.count; index++)
+		{
+			struct object_marker markers[4];
+			char const *name = TAG_BLOCK_GET_ELEMENT(&vehicle_model->markers, index, struct model_marker)->name;
+			short count = object_get_marker_by_name(vehicle_index, name, markers, 4), at;
+
+			for (at = 0; at < count; at++)
+			{
+				real distance = (real)sqrt(distance_squared3d(&matrices[hand].position, &markers[at].matrix.position));
+
+				if (distance < nearest)
+				{
+					nearest = distance;
+					nearest_name = name;
+				}
+			}
+		}
+		platform_log("vr: seated %s hand %.2f m from the vehicle's '%s'", side ? "right" : "left",
+			nearest / units, nearest_name);
+	}
+}
+
 /* In a seat the game's body holds the vehicle's controls, but the view
 rides at its head: its shoulders sit inside Halo's near plane (some 19 cm
 out) and were cut into flat shards across the view. The chest and all on
@@ -2167,7 +2233,17 @@ void vr_render_body_nodes(
 	on the controls */
 	if (seated)
 	{
-		vr_body_seat_lean_back(model, matrices, node_count);
+		static int raw = -1, log_hands = -1;
+
+		if (raw < 0)
+		{
+			raw = config_boolean("vr.diag_body_raw");
+			log_hands = config_boolean("vr.diag_body_log");
+		}
+		if (!raw)
+			vr_body_seat_lean_back(model, matrices, node_count);
+		if (log_hands)
+			vr_body_log_hands(object, model, matrices, node_count);
 		return;
 	}
 	/* under the head: moved across by the head's offset from the game's

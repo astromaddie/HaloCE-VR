@@ -399,6 +399,12 @@ static const struct config_setting config_settings[] =
 	{ "vr.force_render", _config_boolean, "false", "HALO_VR_FORCE_RENDER", _environment_value, _platform_vr,
 		"Draw stereo frames with the headset off (in standby), from a head\n"
 		"looking ahead: for testing." },
+	{ "vr.diag_body_raw", _config_boolean, "false", "HALO_VR_DIAG_BODY_RAW", _environment_value, _platform_vr,
+		"In a seat, draw the body as the game animates it, without moving its chest\n"
+		"out of the view (for comparing)." },
+	{ "vr.diag_body_log", _config_boolean, "false", "HALO_VR_DIAG_BODY_LOG", _environment_value, _platform_vr,
+		"In a seat, log every two seconds where each hand is and the vehicle's\n"
+		"nearest marker." },
 	{ "vr.diag_sweep", _config_string, "\"\"", "HALO_VR_DIAG_SWEEP", _environment_value, _platform_vr,
 		"With vr.force_render and vr.dump_frame: dump once for each head pose of\n"
 		"\"yaw:pitch;yaw:pitch;...\" (degrees), vr.diag_sweep_frames apart." },
