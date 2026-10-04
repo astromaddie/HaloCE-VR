@@ -27,6 +27,7 @@ built from the game's camera and the headset's pose (port/linux/src/vr.h).
 #include "items/weapons.h"
 #include "items/weapon_definitions.h"
 #include "models/model_definitions.h"
+#include "models/models.h"
 #include "objects/object_definitions.h"
 
 #include "halo_vr.h"
@@ -270,8 +271,31 @@ static void view_heading(
 {
 	if (vr_seat_view())
 	{
-		heading->i = (real)cos(vr_render.seat.heading);
-		heading->j = (real)sin(vr_render.seat.heading);
+		/* the vehicle's heading as it is drawn (blended between the ticks:
+		its own heading, taken as the game ticks, turned the view in 30 Hz
+		steps against the smoothly drawn world) */
+		real heading_yaw = vr_render.seat.heading;
+		real_matrix4x3 const *blended = (real_matrix4x3 const *)
+			render_interpolation_object_node_matrices(vr_render.seat.vehicle_index);
+
+		if (blended && vr_render.seat.vehicle_index != NONE)
+		{
+			/* (the root node's turn from the last tick to this frame, added:
+			whatever way the node faces in the vehicle cancels out) */
+			struct object_datum *vehicle = object_get(vr_render.seat.vehicle_index);
+			real_matrix4x3 const *ticked = (real_matrix4x3 const *)object_header_block_get(
+				vr_render.seat.vehicle_index, &vehicle->object.node_matrices);
+			real difference = (real)atan2(blended[0].forward.j, blended[0].forward.i) -
+				(real)atan2(ticked[0].forward.j, ticked[0].forward.i);
+
+			while (difference > _pi)
+				difference -= 2.0f * _pi;
+			while (difference < -_pi)
+				difference += 2.0f * _pi;
+			heading_yaw = vr_yaw(&vehicle->object.forward) + vr_render.seat.offset + difference;
+		}
+		heading->i = (real)cos(heading_yaw);
+		heading->j = (real)sin(heading_yaw);
 		heading->k = 0.0f;
 	}
 	else if (!vr_aiming() || !vr_heading_forward(heading->n))
@@ -283,18 +307,80 @@ static void view_heading(
 /* where the eyes are placed from: in a vehicle seen from its seat, the
 player's head there (the game's camera for a seat is the chase camera's
 place); otherwise the game's camera */
+/* an object's markers by name as it is drawn this frame: from its node
+matrices blended between the ticks (render_interpolation.c), where
+object_get_marker_by_name reads those of the last tick. In a seat the
+view hung from the head marker stepped at 30 Hz while the vehicle around
+it moved smoothly: the Warthog bounced and flickered against the eyes */
+static short vr_object_marker(
+	long object_index,
+	char const *name,
+	struct object_marker *markers,
+	short maximum_marker_count)
+{
+	struct object_datum *object = object_get(object_index);
+	real_matrix4x3 const *blended = (real_matrix4x3 const *)render_interpolation_object_node_matrices(object_index);
+	short count;
+
+	if (!blended)
+		return object_get_marker_by_name(object_index, name, markers, maximum_marker_count);
+	count = model_get_marker_by_name(object_definition_get(object->definition_index)->object.model.index, name,
+		object->object.region_permutations, NULL, NONE, blended, TEST_FLAG(object->object.flags, _object_mirrored_bit),
+		markers, maximum_marker_count);
+	return count;
+}
+
+/* getting in or out of a seat, the eyes are eased from where they were to
+the seat's head (or back) over this many ticks, rather than jumping there
+and riding the head through the climb in */
+#define VR_SEAT_EASE_TICKS 24.0f
+
 static void view_anchor(
 	struct render_camera const *camera,
 	real_point3d *anchor)
 {
+	static boolean was_seat_view = FALSE;
+	static long was_vehicle = NONE;
+	static real_point3d last, from;
+	static real ease_start = -1.0f;
+	real now = (real)game_time_get() + render_interpolation_fraction();
+	boolean seat_view = vr_seat_view();
+
 	*anchor = camera->position;
-	if (vr_seat_view())
+	if (seat_view)
 	{
 		struct object_marker marker;
 
-		if (object_get_marker_by_name(vr_render.seat.unit_index, "head", &marker, 1))
+		if (vr_object_marker(vr_render.seat.unit_index, "head", &marker, 1) > 0)
 			*anchor = marker.matrix.position;
 	}
+	/* (in or out, or into another seat: from the last place shown) */
+	if (seat_view != was_seat_view || (seat_view && vr_render.seat.vehicle_index != was_vehicle))
+	{
+		if (ease_start >= 0.0f || was_seat_view || seat_view)
+		{
+			from = last;
+			ease_start = now;
+		}
+		was_seat_view = seat_view;
+		was_vehicle = seat_view ? vr_render.seat.vehicle_index : NONE;
+	}
+	if (ease_start >= 0.0f)
+	{
+		real t = (now - ease_start) / VR_SEAT_EASE_TICKS;
+
+		if (t >= 1.0f || t < 0.0f || distance_squared3d(&from, anchor) > 25.0f)
+			ease_start = -1.0f;
+		else
+		{
+			real s = t * t * (3.0f - 2.0f * t);
+
+			anchor->x = from.x + (anchor->x - from.x) * s;
+			anchor->y = from.y + (anchor->y - from.y) * s;
+			anchor->z = from.z + (anchor->z - from.z) * s;
+		}
+	}
+	last = *anchor;
 }
 
 static void eye_camera(
@@ -2006,7 +2092,7 @@ static void vr_body_log_hands(
 		{
 			struct object_marker markers[4];
 			char const *name = TAG_BLOCK_GET_ELEMENT(&vehicle_model->markers, index, struct model_marker)->name;
-			short count = object_get_marker_by_name(vehicle_index, name, markers, 4), at;
+			short count = vr_object_marker(vehicle_index, name, markers, 4), at;
 
 			for (at = 0; at < count; at++)
 			{
@@ -2061,7 +2147,7 @@ static int vr_body_seat_grip(
 		char name[64];
 
 		snprintf(name, sizeof(name), names[index], side ? "right" : "left");
-		if (object_get_marker_by_name(vehicle_index, name, &marker, 1) > 0)
+		if (vr_object_marker(vehicle_index, name, &marker, 1) > 0)
 		{
 			*grip = marker.matrix.position;
 			return 1;
