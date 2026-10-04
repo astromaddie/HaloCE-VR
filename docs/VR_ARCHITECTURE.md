@@ -293,8 +293,10 @@ points at the screen the menus are on, as the desktop builds' mouse does: the fl
 stereo the menu's panel. Its trigger clicks (with a tick of buzz), the right B goes back, and the
 pad's buttons still work. It shows as a beam from the hand (the reticle image's middle row,
 stretched along the ray and turned to face the head) and a dot where it lands, on layers of their
-own after the panel's (`HALO_XR_LAYER_BEAM`, `HALO_XR_LAYER_POINTER`): layers have no depth, and
-on the reticle's layer the dot was hidden under the panel.
+own (`HALO_XR_LAYER_BEAM`, `HALO_XR_LAYER_POINTER`), submitted last of all, over every panel,
+quad, screen and fade: layers have no depth, and the cross-port standard has the pointer always
+on top (on the reticle's layer the dot was hidden under the panel). The hand's aiming reticle faces
+the head upright in the world, never rolling with it.
 
 **Room-scale** (`vr.roomscale`, off by default; after HaloCEVR's). Each tick on foot,
 `biped_update_moving` moves the player's collision pill by how far the head walked from where

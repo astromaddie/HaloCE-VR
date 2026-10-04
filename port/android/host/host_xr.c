@@ -1371,40 +1371,6 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		}
 		list[count++] = (const XrCompositionLayerBaseHeader *)&quad;
 	}
-	/* the menus' pointer over their panel (layers have no depth: drawn
-	after it, or the panel hides them): the beam, the reticle's middle row
-	stretched from the hand to the panel, then the dot where it lands */
-	if (layers && (layers->flags & HALO_XR_LAYER_BEAM) && xr.frame_state.shouldRender)
-	{
-		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
-
-		beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-		beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-		beam.subImage.swapchain = swapchain->handle;
-		beam.subImage.imageRect.offset.y = (int32_t)(swapchain->height / 2);
-		beam.subImage.imageRect.extent.width = (int32_t)swapchain->width;
-		beam.subImage.imageRect.extent.height = 1;
-		beam.size.width = layers->beam_size[0];
-		beam.size.height = layers->beam_size[1];
-		beam.space = xr.local;
-		local_pose(&layers->beam_pose, &beam.pose);
-		list[count++] = (const XrCompositionLayerBaseHeader *)&beam;
-	}
-	if (layers && (layers->flags & HALO_XR_LAYER_POINTER) && xr.frame_state.shouldRender)
-	{
-		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
-
-		pointer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-		pointer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-		pointer.subImage.swapchain = swapchain->handle;
-		pointer.subImage.imageRect.extent.width = (int32_t)swapchain->width;
-		pointer.subImage.imageRect.extent.height = (int32_t)swapchain->height;
-		pointer.size.width = layers->pointer_size[0];
-		pointer.size.height = layers->pointer_size[1];
-		pointer.space = xr.local;
-		local_pose(&layers->pointer_pose, &pointer.pose);
-		list[count++] = (const XrCompositionLayerBaseHeader *)&pointer;
-	}
 	/* a weapon's scope, held in the hand: nearer than the HUD */
 	if (layers && (layers->flags & HALO_XR_LAYER_SCOPE) && xr.frame_state.shouldRender)
 	{
@@ -1437,6 +1403,41 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 		fade.pose.orientation.w = 1.0f;
 		fade.pose.position.z = -0.25f;
 		list[count++] = (const XrCompositionLayerBaseHeader *)&fade;
+	}
+	/* the menus' pointer, always on top (the cross-port standard): layers
+	have no depth, so it is the last of them, over every panel, quad, screen
+	and fade. The beam, the reticle's middle row stretched from the hand to
+	the panel, then the dot where it lands */
+	if (layers && (layers->flags & HALO_XR_LAYER_BEAM) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
+
+		beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		beam.subImage.swapchain = swapchain->handle;
+		beam.subImage.imageRect.offset.y = (int32_t)(swapchain->height / 2);
+		beam.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		beam.subImage.imageRect.extent.height = 1;
+		beam.size.width = layers->beam_size[0];
+		beam.size.height = layers->beam_size[1];
+		beam.space = xr.local;
+		local_pose(&layers->beam_pose, &beam.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&beam;
+	}
+	if (layers && (layers->flags & HALO_XR_LAYER_POINTER) && xr.frame_state.shouldRender)
+	{
+		const struct swapchain *swapchain = &xr.swapchains[HALO_XR_SWAPCHAIN_RETICLE];
+
+		pointer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		pointer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		pointer.subImage.swapchain = swapchain->handle;
+		pointer.subImage.imageRect.extent.width = (int32_t)swapchain->width;
+		pointer.subImage.imageRect.extent.height = (int32_t)swapchain->height;
+		pointer.size.width = layers->pointer_size[0];
+		pointer.size.height = layers->pointer_size[1];
+		pointer.space = xr.local;
+		local_pose(&layers->pointer_pose, &pointer.pose);
+		list[count++] = (const XrCompositionLayerBaseHeader *)&pointer;
 	}
 	if (count)
 		xr.frames_rendered++;

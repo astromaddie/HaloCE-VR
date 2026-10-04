@@ -2873,7 +2873,16 @@ void vr_present(unsigned int source, unsigned int texture, int width, int height
 			rotate(vr.aim_pose.orientation, xr_forward, direction);
 			for (axis = 0; axis < 3; axis++)
 				layers.reticle_pose.position[axis] = vr.aim_pose.position[axis] + direction[axis] * vr.reticle_distance;
-			memcpy(layers.reticle_pose.orientation, vr.frame.head.orientation, sizeof(layers.reticle_pose.orientation));
+			/* facing the head, upright in the world: never rolling with the
+			head (the cross-port standard) */
+			{
+				static const float world_up[3] = { 0.0f, 1.0f, 0.0f };
+				float away[3];
+
+				for (axis = 0; axis < 3; axis++)
+					away[axis] = layers.reticle_pose.position[axis] - vr.frame.head.position[axis];
+				look_rotation(away, world_up, layers.reticle_pose.orientation);
+			}
 			layers.reticle_size[0] = layers.reticle_size[1] = 0.018f * vr.reticle_distance;
 			layers.flags |= HALO_XR_LAYER_RETICLE;
 			if (dump_frame_now())
