@@ -22,18 +22,18 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 | Picture-in-picture scope | Built (`vr.scope`), **not yet run on the device.** |
 | Far HUD drawn from the head | Built (15 m away, 10 m wide), **not yet seen worn.** |
 | Near and leash HUD modes (`vr.hud_mode`) | Built, **not yet run on the device.** |
-| Menu laser pointer | Built, **not yet run on the device.** |
+| Menu laser pointer | Worn 2026-10-04: the dot never showed (it was under the panel's layer). Now a beam and a dot over the panel; **the fix not yet worn.** |
+| Menus in stereo on a world-locked panel (2 m, 1.9 m wide) | Built after the 2026-10-04 wear (the menu jittered on the head-locked HUD), **not yet worn.** |
 | Room-scale walking | Built (`vr.roomscale`, off by default), **not yet run on the device.** |
 | VR settings in the pause menu | Built, **not yet run on the device.** |
 | System layer (View: short press back, 1 s recentre, 3 s recentre and standing height; the both-sticks recentre removed) | Built, **not yet run on the device.** |
-| Quit to Steam (confirm, then `xrRequestExitSession`) | Built, **not yet run on the device.** |
 | `vr.settings_version`, range clamping of numeric `vr.*` settings, the old HUD defaults migrated | Built; the config code was exercised on a computer (a fresh file, a version-0 file, clamps, the environment), **not yet on the device.** |
 | Touch and Index fallbacks: grenade and flashlight (grip with a stick click) | Built, **not yet run on the device.** |
 | Recentre from the runtime (`XrEventDataReferenceSpaceChangePending`) | Built, **not yet run on the device.** |
 | 72 Hz automatic fallback | In the host since the refresh request was added; **not yet seen to fire worn.** |
 | Comfort options, foveation | Not started. |
 | sfvr (the cross-port library, vendored): View timing, turning, the haptic queue, the `[vr-perf]` line, settings ranges | Built; sfvr's own tests pass in its repo and the config code was exercised on a computer, **not yet run on the device.** |
-| `vr.turn_mode` / `vr.snap_angle` (settings version 2, `vr.snap_turn` migrated); `vr.hud_mode` and QUIT on the VR settings' second page; Index pause on a trackpad press | Built, **not yet run on the device.** |
+| `vr.turn_mode` / `vr.snap_angle` (settings version 2, `vr.snap_turn` migrated); `vr.hud_mode` on the VR settings' second page; Index pause on a trackpad press | Built, **not yet run on the device.** |
 | Cross-port standard (v0.1) items not done here: vignette, seated mode and `height_offset`, `camera_shake`, the standard's settings tabs, a `dominant_hand` setting, `hud_scale` and `hud_visible`, depth layer submission | Not started. |
 
 ## Device facts (Steam Frame, Lepton 2.8.14, 2026-10-02)
@@ -116,7 +116,12 @@ directly.
   so `xrWaitFrame` paces the loop. Halo already interpolates its 30 Hz simulation to the display
   rate, so no display-time scheduler is needed.
 - **Screen.** In VR the game draws its 640×480 screen at the eye resolution
-  (`vr.resolution_scale` × 1728, through the existing `screen_scale`).
+  (`vr.resolution_scale` × 1728, through the existing `screen_scale`). The eyes' swapchain
+  images are that size too (`host_xr_init`'s `eye_scale_percent`, within the runtime's maximum),
+  so the compositor samples the whole picture. They were the recommended 1728 until 2026-10-04,
+  and each eye was shrunk 1.5:1 by a plain blit first, which softened it.
+- **Textures** are filtered anisotropically in the headset (`vr.texture_anisotropy`, 8 by
+  default): Halo asks for it almost nowhere, and in VR the eyes look along floors and walls.
 - **Flat frames** (menus, loading, cutscenes) copy the picture to an opaque quad floating ahead
   (`vr.screen_distance`, `vr.screen_width`).
 - **Eye views.** An eye's view is the game camera's position plus the tracked eye offset (head
@@ -140,7 +145,7 @@ directly.
   | `vr.hud_mode` | Panel | Placement |
   | --- | --- | --- |
   | `far` (default) | 15 m away, 10 m wide (37°), as HaloCEVR's | Head-locked in VIEW space, so it turns with the head including its roll. The eyes needn't refocus between it and the world |
-  | `near` | 1.5 m away, 1.1 m wide (40°) | In LOCAL space at the head's position, turned by the head's yaw and pitch, never its roll (the pitch is held short of 80°) |
+  | `near` | 1.5 m away, 1.1 m wide (40°) | Head-locked in VIEW space, turned back by the head's roll: it follows the head's yaw and pitch, never its roll. (Until 2026-10-04 it was posed in LOCAL space each frame from the predicted head, and juddered whenever the compositor showed a frame late or twice) |
   | `leash` | 1.5 m away, 1.1 m wide (40°) | In LOCAL space, level at the head's height, and following the head's position. It keeps its yaw until the head's yaw is more than 25° from it, then eases to the head's with a 0.1 s time constant (about 0.3 s). A recentre or a return from a flat screen puts it ahead of the head |
 
   `vr.hud_distance` and `vr.hud_width` override the mode's distance and width when above 0
@@ -266,14 +271,9 @@ pause menu's: same font, colours, buttons and boxes.
   Page 1: controls (VR / Xbox), aim (hand / head), gun hand, turning (snap 30 / snap 45 /
   smooth / off), room-scale, scope, vehicles (inside / chase), steering (stick / head /
   hand), cutscenes (3D / flat) and MORE..., which opens page 2: HUD (far / near / leash) and
-  QUIT TO STEAM. B goes back a page. `vr_menu_page` builds each page from the items marked
-  with it.
-- **QUIT TO STEAM** (the last item, on page 2) is not a setting. A asks ("SURE? A TO QUIT"); A again within
-  five seconds calls `vr_request_exit`, which has the host call `xrRequestExitSession`. The
-  frame loop already follows the session's STOPPING (the host ends it) and EXITING states to the
-  exit in `frame_begin`, and `vr_request_exit` exits after three seconds regardless if they never
-  come. Left, another item, or the time puts it back. It does not save: the game keeps what its
-  own checkpoints have saved.
+  body. B goes back a page. `vr_menu_page` builds each page from the items marked with it.
+- **No quit item:** SteamVR's own menu quits applications (the cross-port standard; QUIT TO
+  STEAM was removed after the 2026-10-04 wear).
 - **Changing a setting:** A or right steps it on, left steps it back, and B returns to the pause
   menu. The laser pointer clicks them too.
 - **Saving:** each change is written into `config.toml` (`config_write_*`) and taken up at once
@@ -282,10 +282,18 @@ pause menu's: same font, colours, buttons and boxes.
   in a copy of its tag table. A button's text comes from code (game data input function 41), and
   its changes run event handler functions 102 and 103, one past the end of each table.
 
+**Menus in stereo** (the pause menu, the VR settings). While a menu is up (`vr_ui_pointer` is
+told so each frame), the HUD's image leaves the HUD's placement for a panel held in the room:
+2 m ahead where the head faced as the menu came up, at the head's height, 1.9 m wide (about 50°),
+re-placed by a recentre. This is the cross-port standard's menu panel.
+
 **Menus' laser pointer** (`vr_ui_pointer`, behind `halo_ui_pointer_update`). The weapon hand
-points at the screen the menus are on, as the desktop builds' mouse does: the flat screen, or
-in stereo (the pause menu) the HUD's panel. Its trigger clicks (with a tick of buzz), the right
-B goes back, and a dot on the reticle's layer shows where it points. The pad's buttons still work.
+points at the screen the menus are on, as the desktop builds' mouse does: the flat screen, or in
+stereo the menu's panel. Its trigger clicks (with a tick of buzz), the right B goes back, and the
+pad's buttons still work. It shows as a beam from the hand (the reticle image's middle row,
+stretched along the ray and turned to face the head) and a dot where it lands, on layers of their
+own after the panel's (`HALO_XR_LAYER_BEAM`, `HALO_XR_LAYER_POINTER`): layers have no depth, and
+on the reticle's layer the dot was hidden under the panel.
 
 **Room-scale** (`vr.roomscale`, off by default; after HaloCEVR's). Each tick on foot,
 `biped_update_moving` moves the player's collision pill by how far the head walked from where
@@ -430,3 +438,27 @@ Diagnostics:
 The controls, gestures, aim smoothing, haptics and scope follow the designs of LivingFray's PC
 mod [HaloCEVR](https://github.com/LivingFray/HaloCEVR), re-implemented here for the decompiled
 game.
+
+## Wear feedback, 2026-10-04 (Silent Cartographer)
+
+Liked: smooth, good gunplay, the 3D cinema for the level-load video. The play log
+(`lepton-steamlaunch-3667167125.log` on the Frame) shows **stereo gameplay at about 46 fps on the
+90 Hz display**: frames missed in 88 of 104 `[vr-perf]` samples, about 13 ms of CPU a frame
+(game 5.4, render 4.1, end 3.7) against 11.1 ms. SteamVR ran Halo at half rate and reprojected.
+That alone gives judder and edge pop-in while turning. The way out is CPU time (not started) or
+the Frame's display at 72 Hz, which Halo held before.
+
+| # | Report | Status |
+| --- | --- | --- |
+| 1 | The Warthog bounces and flickers the whole drive | code-ea (seated view, interpolated head and heading, eased in and out). Half-rate frames add to it |
+| 2 | The HUD jitters as the head turns | The near HUD is head-locked in VIEW space with the roll cancelled. **Not yet worn** |
+| 3 | General jitter, pop-in at the edges | Explained by the half rate above; no fix yet beyond 72 Hz |
+| 4 | The menu jitters up and down when opened | Menus are on a world-locked panel. **Not yet worn** |
+| 5 | Getting into the Warthog is unsmooth | code-ea (the eased seat view) |
+| 6 | Steering with one stick and gas on the other | Options to choose from (mockup); nothing built |
+| 7 | Holding X went to third person | Not explained by the log, and the director keeps first person in seats with `vr.vehicle_view` "first_person". Physical X sends Black (switch grenades) and Halo's prompts say "X" for Action: a face-button option is in the same mockup. Turn on `vr.diag_buttons` for the next wear to catch it |
+| 8 | No laser in menus | A beam and a dot over the panel. **Not yet worn** |
+| 9 | QUIT TO STEAM in the VR settings | Removed |
+| 10 | The image isn't sharp | Eye images at the render size, anisotropic filtering. **Not yet worn** |
+| Wish | An immersive main menu around the ring | Not started. The menu scene has no player window, so it needs its own stereo path; the world-locked menu panel above is the piece it was missing |
+
