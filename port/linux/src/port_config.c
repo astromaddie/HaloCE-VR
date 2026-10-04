@@ -272,6 +272,9 @@ static const struct config_setting config_settings[] =
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
 		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
 		"vr.snap_turn). Leave it be." },
+	{ "vr.texture_anisotropy", _config_integer, "8", "HALO_VR_TEXTURE_ANISOTROPY", _environment_value, _platform_vr,
+		"Anisotropic filtering for the game's textures in the headset, 1 (off)\n"
+		"to 16: keeps floors and walls sharp seen at a slant." },
 	{ "vr.resolution_scale", _config_real, "1.5", "HALO_VR_RESOLUTION_SCALE", _environment_value, _platform_vr,
 		"The game's picture in the headset as a fraction of the runtime's\n"
 		"recommended eye resolution (1728x1728 on the Steam Frame), 0.75 to 1.5;\n"
@@ -903,6 +906,7 @@ static const struct config_range
 } config_ranges[] =
 {
 	{ "vr.resolution_scale", 0.75, 1.5, 0 },            /* sfvr */
+	{ "vr.texture_anisotropy", 1.0, 16.0, 0 },
 	{ "vr.screen_distance", 0.8, 5.0, 0 },
 	{ "vr.screen_width", 0.5, 6.0, 0 },
 	{ "vr.world_scale", 0.1, 1.0, 0 },

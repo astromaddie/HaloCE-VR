@@ -2146,8 +2146,30 @@ static void configure_sampler(int stage, BOOL mipmapped, BOOL hires)
 	(texture_lod_bias) */
 	glSamplerParameterf(sampler, GL_TEXTURE_MIN_LOD, (float)maximum_mip_level);
 	if (xgpu_capabilities.anisotropy)
-		glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-			(min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ? (float)state[D3DTSS_MAXANISOTROPY] : 1.0f);
+	{
+		float anisotropy = (min_filter == D3DTEXF_ANISOTROPIC && state[D3DTSS_MAXANISOTROPY] > 1) ?
+			(float)state[D3DTSS_MAXANISOTROPY] : 1.0f;
+
+#ifdef HALO_VR
+		/* in the headset the eyes look along floors and walls more than the
+		Xbox's screen did: mipmapped textures get vr.texture_anisotropy
+		at least, keeping them sharp at a slant */
+		if (mip_filter != D3DTEXF_NONE && min_filter != D3DTEXF_POINT)
+		{
+			static float vr_anisotropy = -1.0f;
+
+			if (vr_anisotropy < 0.0f)
+			{
+				vr_anisotropy = (float)config_integer("vr.texture_anisotropy");
+				if (vr_anisotropy < 1.0f)
+					vr_anisotropy = 1.0f;
+			}
+			if (anisotropy < vr_anisotropy)
+				anisotropy = vr_anisotropy;
+		}
+#endif
+		glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
+	}
 	if (xgpu_capabilities.border_clamp)
 	{
 		color_to_vec4(state[D3DTSS_BORDERCOLOR], border);
