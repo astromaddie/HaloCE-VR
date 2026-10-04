@@ -2039,10 +2039,45 @@ the body's way, up to the most, and leaned toward where the head has gone
 #define VR_SEAT_CHEST_TURN_MOST 0.61f
 #define VR_SEAT_CHEST_LEAN_MOST 0.44f
 
+/* where a seated hand's grip belongs: the vehicle's marker for it (the
+Warthog's "left hand wheel grip", "gunner left hand" and so on), found by
+the seat's role and the side; 1 with its place */
+static int vr_body_seat_grip(
+	long vehicle_index,
+	int side,
+	real_point3d *grip)
+{
+	static char const *const driver_names[] = { "%s hand wheel grip", "driver %s hand", "%s hand" };
+	static char const *const gunner_names[] = { "gunner %s hand", "%s hand" };
+	char const *const *names = vr_render.seat.gunner ? gunner_names : driver_names;
+	int count = vr_render.seat.gunner ? (int)NUMBEROF(gunner_names) : (int)NUMBEROF(driver_names), index;
+
+	if (vehicle_index == NONE || (!vr_render.seat.driver && !vr_render.seat.gunner))
+		return 0;
+	for (index = 0; index < count; index++)
+	{
+		struct object_marker marker;
+		char name[64];
+
+		snprintf(name, sizeof(name), names[index], side ? "right" : "left");
+		if (object_get_marker_by_name(vehicle_index, name, &marker, 1) > 0)
+		{
+			*grip = marker.matrix.position;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* the hand node is at the wrist; the grip is in the palm, this far along
+the hand from it */
+#define VR_SEAT_WRIST_TO_GRIP 0.08f
+
 static void vr_body_seat_lean_back(
 	struct model *model,
 	real_matrix4x3 *matrices,
-	short node_count)
+	short node_count,
+	long vehicle_index)
 {
 	static char const *const arm_names[2][3] =
 	{
@@ -2160,7 +2195,27 @@ static void vr_body_seat_lean_back(
 		pole.i = animated[fore].position.x - (animated[upper].position.x + animated[hand].position.x) * 0.5f;
 		pole.j = animated[fore].position.y - (animated[upper].position.y + animated[hand].position.y) * 0.5f;
 		pole.k = animated[fore].position.z - (animated[upper].position.z + animated[hand].position.z) * 0.5f;
-		vr_body_reach(model, matrices, node_count, upper, fore, hand, &animated[hand].position, &pole);
+		/* the hand to the vehicle's grip for it, if it has one (the game's
+		own seat animations leave the gunner's hands on the turret's pivot,
+		some 14 cm off its handles), else where the animation has it; the
+		wrist aimed short of the grip along the hand as animated */
+		{
+			real_point3d target = animated[hand].position, grip;
+			real_vector3d along;
+
+			if (vr_body_seat_grip(vehicle_index, side, &grip))
+			{
+				vr_point_minus(&animated[hand].position, &animated[fore].position, &along);
+				if (vr_length(&along) > 1e-5f)
+				{
+					normalize3d(&along);
+					target.x = grip.x - along.i * VR_SEAT_WRIST_TO_GRIP * units;
+					target.y = grip.y - along.j * VR_SEAT_WRIST_TO_GRIP * units;
+					target.z = grip.z - along.k * VR_SEAT_WRIST_TO_GRIP * units;
+				}
+			}
+			vr_body_reach(model, matrices, node_count, upper, fore, hand, &target, &pole);
+		}
 		/* the hand (and its fingers) as the animation has it, where the
 		forearm reached: on the controls, or short of them if out of reach
 		(else it came off at the wrist) */
@@ -2241,7 +2296,7 @@ void vr_render_body_nodes(
 			log_hands = config_boolean("vr.diag_body_log");
 		}
 		if (!raw)
-			vr_body_seat_lean_back(model, matrices, node_count);
+			vr_body_seat_lean_back(model, matrices, node_count, object->object.parent_object_index);
 		if (log_hands)
 			vr_body_log_hands(object, model, matrices, node_count);
 		return;
