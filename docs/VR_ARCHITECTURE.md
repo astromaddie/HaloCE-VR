@@ -524,6 +524,21 @@ unattended, the runtime at 90 Hz (11.1 ms), 1.25× unless said:
   per-pass state the game resends), then the game tick. simpleperf can't record in Lepton at
   the moment (`perf_event_paranoid` refused), so no per-function profile yet.
 
+**Next steps proposed (not started):**
+
+1. **Single-pass stereo** (`GL_OVR_multiview2`, offered by Zink here): both eyes in one pass, so
+   the game issues each draw once, not twice. That halves the eyes' draw calls on the CPU and
+   in Zink. The work: render the eyes into a two-layer image; give the translated NV2A vertex
+   programs (`nv2a_vsh.c`) each eye's camera matrices, chosen by `gl_ViewID_OVR`; cull with
+   one frustum covering both eyes; keep the per-frame state (fog, flares, sky) once. The largest
+   change to the renderer so far: days, with a fallback to two passes.
+2. Then the game's own 5 ms (the tick, interpolation, UI): needs a profile, so simpleperf
+   working in Lepton first.
+3. Anti-aliasing afterwards: `GL_EXT_multisampled_render_to_texture` is offered, the cheap
+   kind of MSAA on a tiled GPU (resolved on the chip). Worth trying once frames have room.
+
+Until then, HaloCEVR's refresh rate set to 72 Hz in SteamVR's per-app settings gives a full rate.
+
 The budgets are 8.3 ms at 120 Hz, 11.1 ms at 90 and 13.9 ms at 72. Halo **does not hold 120,
 or 90, on this open level** (a30 held 90 in an earlier wear), and needs a performance pass: the
 3.9 ms "end" (SteamVR's GL binding, lesson 38), the per-eye passes and the game tick. Until then
