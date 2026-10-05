@@ -524,9 +524,31 @@ unattended, the runtime at 90 Hz (11.1 ms), 1.25× unless said:
   per-pass state the game resends), then the game tick. simpleperf can't record in Lepton at
   the moment (`perf_event_paranoid` refused), so no per-function profile yet.
 
+**Performance pass, step 2: single-pass stereo (2026-10-05, branch mv-core).** Both eyes in one
+world pass (`vr.multiview`, on by default; false draws them one at a time):
+- The window is drawn from between the eyes with a frustum covering both, so culling and
+  visibility happen once for the pair (`vr_render.c`, `multiview_windows`).
+- `rasterizer_set_frustum_z` gives the vertex programs each eye's camera: view 0's in
+  c[-96..-89] as before, view 1's in `c_view1`. The translated programs (`nv2a_vsh.c`, by Codex
+  Sol 6.1) choose them by `gl_ViewID_OVR`.
+- `d3d8_gl.c` (by a Claude subagent) draws the back buffer into a two-layer target through
+  `GL_OVR_multiview2`, with two-view program variants, and hands each layer to its eye. Reads of
+  the back buffer during the pass see the left eye's layer. Two-view occlusion counts are
+  halved. The hidden-area mask is not drawn in the single pass yet.
+
+Measured unattended on b30, the runtime at 90 Hz, 1.25×:
+
+| | Draws a frame | Target changes | fps | CPU a frame | end |
+| --- | --- | --- | --- | --- | --- |
+| Two passes | 1,180–1,230 | 21–23 | 55–85 | 11.5–14.8 ms | 3.1–3.5 ms |
+| One pass | 540–720 | 16 | 67–89 | 10.2–12.7 ms | 1.9–3.0 ms |
+
+The eye dumps from the single pass show each eye from its own camera (far scenery 97 px apart,
+as the synthetic head's asymmetric fields give; near things more). Not yet worn.
+
 **Next steps proposed (not started):**
 
-1. **Single-pass stereo** (`GL_OVR_multiview2`, offered by Zink here): both eyes in one pass, so
+1. *(Done as step 2 above.)* **Single-pass stereo** (`GL_OVR_multiview2`, offered by Zink here): both eyes in one pass, so
    the game issues each draw once, not twice. That halves the eyes' draw calls on the CPU and
    in Zink. The work: render the eyes into a two-layer image; give the translated NV2A vertex
    programs (`nv2a_vsh.c`) each eye's camera matrices, chosen by `gl_ViewID_OVR`; cull with
