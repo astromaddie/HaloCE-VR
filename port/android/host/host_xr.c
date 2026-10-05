@@ -1140,14 +1140,15 @@ static void log_statistics(void)
 			{
 				host_logf(HOST_LOG_WARN, "[openxr] %.0f Hz not held (%.1f frames/s): back to 72 Hz",
 					xr.refresh_rate, xr.frames / seconds);
-				/* SteamVR on the Frame offers only the rate the Frame's
-				display settings have: then there is no going back from
-				here, and the runtime runs the game at half rate. Say so
-				once rather than ask every twenty seconds */
+				/* SteamVR offers only the rate set for this app (its per-app
+				setting, else the display's): then there is no going back
+				from here, and the runtime runs the game at half rate. Say
+				so once rather than ask every twenty seconds */
 				if (host_xr_set_refresh_rate(72.0f) <= 0.0f || xr.refresh_rate > 72.5f)
 				{
-					host_logf(HOST_LOG_WARN, "[openxr] the runtime offers no rate below %.0f Hz: set the "
-						"headset's display to 72 Hz for this game to run at a full rate", xr.refresh_rate);
+					host_logf(HOST_LOG_WARN, "[openxr] the runtime offers no rate below %.0f Hz: set this "
+						"game's refresh rate to 72 Hz in SteamVR's per-app settings (in the headset) for it to "
+						"run at a full rate", xr.refresh_rate);
 					xr.refresh_fallback_failed = 1;
 				}
 			}
