@@ -127,6 +127,11 @@ static struct
 	jobject activity;
 	/* statistics */
 	long long frames, frames_rendered;
+	/* the frame's end, timed (log_statistics): releasing the images and
+	xrEndFrame, nanoseconds summed over `end_frames` */
+	long long end_release_ns, end_submit_ns, end_frames;
+	/* the fallback to 72 Hz was asked for and the runtime has no such rate */
+	int refresh_fallback_failed;
 	/* the refresh rate asked for, and windows in a row it was not held */
 	float refresh_rate;
 	int refresh_misses;
@@ -1118,9 +1123,12 @@ static void log_statistics(void)
 	if (seconds < 10.0)
 		return;
 	/* (the [vr-perf] line is the game's, vr_present; this is the runtime's side of it) */
-	host_logf(HOST_LOG_INFO, "[openxr] %.1f frames/s (%lld rendered) over %.1f s, period %.3f ms, state %s",
+	host_logf(HOST_LOG_INFO, "[openxr] %.1f frames/s (%lld rendered) over %.1f s, period %.3f ms, state %s; "
+		"frame end: releases %.2f ms, xrEndFrame %.2f ms",
 		xr.frames / seconds, xr.frames_rendered, seconds, xr.frame_state.predictedDisplayPeriod * 1e-6,
-		state_name(xr.state));
+		state_name(xr.state), xr.end_frames ? xr.end_release_ns * 1e-6 / xr.end_frames : 0.0,
+		xr.end_frames ? xr.end_submit_ns * 1e-6 / xr.end_frames : 0.0);
+	xr.end_release_ns = xr.end_submit_ns = xr.end_frames = 0;
 	/* A rate above 72 that the game does not hold while worn (focused) is
 	worse than 72 held: after two windows of ten seconds short of 90% of
 	it, fall back */
@@ -1128,11 +1136,20 @@ static void log_statistics(void)
 	{
 		if (xr.frames / seconds < xr.refresh_rate * 0.9f)
 		{
-			if (++xr.refresh_misses >= 2)
+			if (++xr.refresh_misses >= 2 && !xr.refresh_fallback_failed)
 			{
 				host_logf(HOST_LOG_WARN, "[openxr] %.0f Hz not held (%.1f frames/s): back to 72 Hz",
 					xr.refresh_rate, xr.frames / seconds);
-				host_xr_set_refresh_rate(72.0f);
+				/* SteamVR on the Frame offers only the rate the Frame's
+				display settings have: then there is no going back from
+				here, and the runtime runs the game at half rate. Say so
+				once rather than ask every twenty seconds */
+				if (host_xr_set_refresh_rate(72.0f) <= 0.0f || xr.refresh_rate > 72.5f)
+				{
+					host_logf(HOST_LOG_WARN, "[openxr] the runtime offers no rate below %.0f Hz: set the "
+						"headset's display to 72 Hz for this game to run at a full rate", xr.refresh_rate);
+					xr.refresh_fallback_failed = 1;
+				}
 			}
 		}
 		else
@@ -1299,11 +1316,15 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	uint32_t count = 0;
 	int which;
 
+	struct timespec began, released, submitted;
+
 	if (!xr.frame_begun)
 		return;
+	clock_gettime(CLOCK_MONOTONIC, &began);
 	for (which = 0; which < HALO_XR_SWAPCHAIN_COUNT; which++)
 		host_xr_release((uint32_t)which);
 	release_atlas();
+	clock_gettime(CLOCK_MONOTONIC, &released);
 	if (layers && (layers->flags & HALO_XR_LAYER_PROJECTION) && xr.views_valid && xr.frame_state.shouldRender)
 	{
 		int eye;
@@ -1465,6 +1486,10 @@ void host_xr_end_frame(const struct halo_xr_layers *layers)
 	end.layerCount = count;
 	end.layers = list;
 	check(xrEndFrame(xr.session, &end), "xrEndFrame");
+	clock_gettime(CLOCK_MONOTONIC, &submitted);
+	xr.end_release_ns += (released.tv_sec - began.tv_sec) * 1000000000LL + (released.tv_nsec - began.tv_nsec);
+	xr.end_submit_ns += (submitted.tv_sec - released.tv_sec) * 1000000000LL + (submitted.tv_nsec - released.tv_nsec);
+	xr.end_frames++;
 	xr.frame_begun = 0;
 }
 
