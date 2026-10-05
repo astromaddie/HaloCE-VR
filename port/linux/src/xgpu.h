@@ -81,7 +81,8 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 	unsigned long packed_attribute_mask);
 /* the same drawn into view_count views at once (GL_OVR_multiview2): with
 2, view 1 reads c[0..7] from the uniform c_view1 (HALO_VR) */
-char *nv2a_vertex_shader_to_glsl_views(const DWORD *instructions, unsigned long instruction_count, unsigned long packed_attribute_mask, int view_count);
+char *nv2a_vertex_shader_to_glsl_views(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask, int view_count);
 
 /* ---------- pixel shaders */
 

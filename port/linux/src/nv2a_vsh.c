@@ -76,7 +76,7 @@ static void write_mask(unsigned long mask, char *out)
 	out[count] = 0;
 }
 
-static void operand(struct xgpu_text *text, const DWORD *instruction, char which, int relative)
+static void operand(struct xgpu_text *text, const DWORD *instruction, char which, int relative, int views)
 {
 	static const char swizzle_names[] = "xyzw";
 	unsigned long negate, swizzle[4], index, mux;
@@ -126,7 +126,12 @@ static void operand(struct xgpu_text *text, const DWORD *instruction, char which
 		xgpu_text_append(text, "v%lu", field(instruction, 1, 9, 4));
 		break;
 	case _mux_constant:
-		if (relative)
+		index = field(instruction, 1, 13, 8);
+		if (views && relative)
+			xgpu_text_append(text, "c_at(clamp(a0 + %lu, 0, %d))", field(instruction, 1, 13, 8), XGPU_VERTEX_CONSTANT_COUNT - 1);
+		else if (views && index < 8)
+			xgpu_text_append(text, "((gl_ViewID_OVR == 1u) ? c_view1[%lu] : c[%lu])", index, index);
+		else if (relative)
 			xgpu_text_append(text, "c[clamp(a0 + %lu, 0, %d)]", field(instruction, 1, 13, 8), XGPU_VERTEX_CONSTANT_COUNT - 1);
 		else
 			xgpu_text_append(text, "c[%lu]", field(instruction, 1, 13, 8));
@@ -194,16 +199,33 @@ static const char shader_prologue[] =
 	"	return vec4(1.0, max(s.x, 0.0), specular, 1.0);\n"
 	"}\n";
 
-char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
-	unsigned long packed_attribute_mask)
+char *nv2a_vertex_shader_to_glsl_views(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask, int view_count)
 {
 	struct xgpu_text text = { 0 };
 	unsigned long index;
 
 #ifdef HALO_ANDROID
+	if (view_count != 2)
+		view_count = 1;
 	xgpu_text_append(&text, "#version %s\n", xgpu_capabilities.shading_language);
+	if (view_count == 2)
+		xgpu_text_append(&text,
+			"#extension GL_OVR_multiview2 : require\n"
+			"layout(num_views = 2) in;\n");
+#else
+	view_count = 1;
 #endif
 	xgpu_text_append(&text, "%s", shader_prologue);
+#ifdef HALO_ANDROID
+	if (view_count == 2)
+		xgpu_text_append(&text,
+			"uniform vec4 c_view1[8];\n"
+			"vec4 c_at(int i)\n"
+			"{\n"
+			"\treturn gl_ViewID_OVR == 1u && i < 8 ? c_view1[i] : c[i];\n"
+			"}\n");
+#endif
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		if (packed_attribute_mask & (1UL << index))
@@ -252,9 +274,9 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 		char mask[5];
 
 		xgpu_text_append(&text, "\t/* %lu */\n", index);
-		xgpu_text_append(&text, "\tA = "); operand(&text, instruction, 'A', relative); xgpu_text_append(&text, ";\n");
-		xgpu_text_append(&text, "\tB = "); operand(&text, instruction, 'B', relative); xgpu_text_append(&text, ";\n");
-		xgpu_text_append(&text, "\tC = "); operand(&text, instruction, 'C', relative); xgpu_text_append(&text, ";\n");
+		xgpu_text_append(&text, "\tA = "); operand(&text, instruction, 'A', relative, view_count == 2); xgpu_text_append(&text, ";\n");
+		xgpu_text_append(&text, "\tB = "); operand(&text, instruction, 'B', relative, view_count == 2); xgpu_text_append(&text, ";\n");
+		xgpu_text_append(&text, "\tC = "); operand(&text, instruction, 'C', relative, view_count == 2); xgpu_text_append(&text, ";\n");
 
 		switch (mac)
 		{
@@ -377,4 +399,10 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 #endif
 		);
 	return text.buffer;
+}
+
+char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask)
+{
+	return nv2a_vertex_shader_to_glsl_views(instructions, instruction_count, packed_attribute_mask, 1);
 }
