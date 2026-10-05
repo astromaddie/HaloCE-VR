@@ -67,6 +67,7 @@ this list to generate the guest's entry points */
 	X(glActiveTexture) \
 	X(glTexImage2D) \
 	X(glTexImage3D) \
+	X(glTexStorage3D) \
 	X(glTexSubImage2D) \
 	X(glCompressedTexImage2D) \
 	X(glCompressedTexImage3D) \
@@ -83,6 +84,8 @@ this list to generate the guest's entry points */
 	X(glDeleteFramebuffers) \
 	X(glBindFramebuffer) \
 	X(glFramebufferTexture2D) \
+	X(glFramebufferTextureLayer) \
+	X(glFramebufferTextureMultiviewOVR) \
 	X(glCheckFramebufferStatus) \
 	X(glBlitFramebuffer) \
 	X(glDrawBuffers) \
@@ -285,6 +288,7 @@ pointers, sees the declarations without these aliases */
 #define glActiveTexture halo_glActiveTexture
 #define glTexImage2D halo_glTexImage2D
 #define glTexImage3D halo_glTexImage3D
+#define glTexStorage3D halo_glTexStorage3D
 #define glTexSubImage2D halo_glTexSubImage2D
 #define glCompressedTexImage2D halo_glCompressedTexImage2D
 #define glCompressedTexImage3D halo_glCompressedTexImage3D
@@ -301,6 +305,8 @@ pointers, sees the declarations without these aliases */
 #define glDeleteFramebuffers halo_glDeleteFramebuffers
 #define glBindFramebuffer halo_glBindFramebuffer
 #define glFramebufferTexture2D halo_glFramebufferTexture2D
+#define glFramebufferTextureLayer halo_glFramebufferTextureLayer
+#define glFramebufferTextureMultiviewOVR halo_glFramebufferTextureMultiviewOVR
 #define glCheckFramebufferStatus halo_glCheckFramebufferStatus
 #define glBlitFramebuffer halo_glBlitFramebuffer
 #define glDrawBuffers halo_glDrawBuffers
