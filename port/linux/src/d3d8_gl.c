@@ -192,6 +192,10 @@ struct vertex_shader_object
 	unsigned long packed_mask;
 	/* [0] streams per the declaration, [1] immediate mode (all floats) */
 	GLuint shader[2];
+#ifdef HALO_VR
+	/* the same, drawn into both eyes' layers at once (halo_vr_multiview_begin) */
+	GLuint multiview_shader[2];
+#endif
 };
 
 /* ---------- programs */
@@ -239,6 +243,12 @@ struct program_entry
 	GLint bump_matrix, bump_luminance, texture_scale;
 	GLint texture_lod_bias;
 	GLint screen_offset;
+#ifdef HALO_VR
+	/* a 2-view program's c[0..7] for view 1, and view1_serial at its last
+	upload of them (halo_vr_set_view1_vertex_constants) */
+	GLint constants_view1;
+	unsigned long view1_serial;
+#endif
 
 	/* the vertex constants c[0..constant_count) the program uses; with
 	consecutive locations, a changed range is uploaded by itself */
@@ -894,6 +904,145 @@ static GLint target_pixel(float coordinate, int axis)
 	return (GLint)floorf(coordinate * target_scale[axis] + 0.5f);
 }
 
+#ifdef HALO_VR
+/* ---------- single-pass stereo (halo_vr_multiview_begin)
+
+While it is on, the back buffer's draws and clears go to a 2-layer copy of
+it instead, both eyes in one pass: GL_OVR_multiview2 runs each draw's
+vertex program once per layer, view 1 with its own camera constants
+(c_view1), and halo_vr_resolve_multiview hands each layer to its eye. Other
+targets (the game's render-to-texture passes) stay single-view, and a
+2-view program only ever draws into the layers. */
+
+static struct
+{
+	BOOL active;
+	/* GL_OVR_multiview2 with two views and a complete framebuffer: -1
+	until first asked, 0 for good once it is found wanting */
+	int supported;
+	/* the back buffer's and depth buffer's targets the layers stand in for
+	(entries live for good), and their size in pixels */
+	struct render_target_entry *color_target, *depth_target;
+	GLsizei width, height;
+	/* GL_TEXTURE_2D_ARRAY of 2 layers, as the back buffer and depth buffer */
+	GLuint color, depth;
+	/* both layers, colour and depth; depth alone; each colour layer, for
+	reading; and the back buffer's own (multiview_back_buffer_sync) */
+	GLuint framebuffer, depth_framebuffer, layer_framebuffers[2], back_buffer_framebuffer;
+	/* drawn into since layer 0 was last copied into the back buffer */
+	BOOL dirty;
+	BOOL mixed_logged;
+} multiview = { FALSE, -1 };
+
+/* the bound framebuffer is the layers': draws take 2-view programs
+(vertex_shader_get) */
+static BOOL multiview_bound;
+/* view 1's c[0..7], and how many times they have changed */
+static float view1_constants[8][4];
+static unsigned long view1_serial;
+
+static void multiview_delete(void)
+{
+	int layer;
+
+	if (multiview.framebuffer)
+		glDeleteFramebuffers(1, &multiview.framebuffer);
+	if (multiview.depth_framebuffer)
+		glDeleteFramebuffers(1, &multiview.depth_framebuffer);
+	for (layer = 0; layer < 2; layer++)
+	{
+		if (multiview.layer_framebuffers[layer])
+			glDeleteFramebuffers(1, &multiview.layer_framebuffers[layer]);
+		multiview.layer_framebuffers[layer] = 0;
+	}
+	if (multiview.color)
+		glDeleteTextures(1, &multiview.color);
+	if (multiview.depth)
+		glDeleteTextures(1, &multiview.depth);
+	multiview.framebuffer = multiview.depth_framebuffer = 0;
+	multiview.color = multiview.depth = 0;
+	multiview.width = multiview.height = 0;
+}
+
+/* the layers at the back buffer's size and formats; FALSE (logged) if a
+framebuffer is incomplete */
+static BOOL multiview_create(GLsizei width, GLsizei height)
+{
+	GLenum color_buffer = GL_COLOR_ATTACHMENT0, no_buffer = GL_NONE;
+	GLenum status[4];
+	int layer;
+
+	multiview_delete();
+	glGenTextures(1, &multiview.color);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, multiview.color);
+	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, width, height, 2);
+	glGenTextures(1, &multiview.depth);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, multiview.depth);
+	glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_DEPTH24_STENCIL8, width, height, 2);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+	glGenFramebuffers(1, &multiview.framebuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, multiview.framebuffer);
+	glFramebufferTextureMultiviewOVR(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multiview.color, 0, 0, 2);
+	glFramebufferTextureMultiviewOVR(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, multiview.depth, 0, 0, 2);
+	glDrawBuffers(1, &color_buffer);
+	status[0] = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+	/* (a pass into the depth buffer with no colour target) */
+	glGenFramebuffers(1, &multiview.depth_framebuffer);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, multiview.depth_framebuffer);
+	glFramebufferTextureMultiviewOVR(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, multiview.depth, 0, 0, 2);
+	glDrawBuffers(1, &no_buffer);
+	status[1] = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	for (layer = 0; layer < 2; layer++)
+	{
+		glGenFramebuffers(1, &multiview.layer_framebuffers[layer]);
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, multiview.layer_framebuffers[layer]);
+		glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, multiview.color, 0, layer);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		status[2 + layer] = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+	}
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	xgpu_gl_state_invalidate();
+	if (status[0] != GL_FRAMEBUFFER_COMPLETE || status[1] != GL_FRAMEBUFFER_COMPLETE ||
+		status[2] != GL_FRAMEBUFFER_COMPLETE || status[3] != GL_FRAMEBUFFER_COMPLETE)
+	{
+		platform_log("vr: single-pass stereo is off: its %dx%d framebuffers are incomplete (%04x %04x %04x %04x)",
+			(int)width, (int)height, (unsigned)status[0], (unsigned)status[1], (unsigned)status[2], (unsigned)status[3]);
+		multiview_delete();
+		return FALSE;
+	}
+	multiview.width = width;
+	multiview.height = height;
+	platform_log("vr: single-pass stereo: two %dx%d layers", (int)width, (int)height);
+	return TRUE;
+}
+
+/* While the layers are drawn, the back buffer as a source (a texture, a
+screenshot, presentation, halo_vr_resolve_eye) is layer 0: the left eye's
+picture, which the right eye then shows too where it is used. Copied once
+per change, keeping the framebuffer and scissor of a draw being prepared
+(bind_targets, apply_raster_state). */
+static void multiview_back_buffer_sync(void)
+{
+	if (!multiview.active || !multiview.dirty)
+		return;
+	/* (a draw being prepared into the layers changes layer 0 again) */
+	multiview.dirty = gl_state.framebuffer == multiview.framebuffer;
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, multiview.layer_framebuffers[0]);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, multiview.back_buffer_framebuffer);
+	glDisable(GL_SCISSOR_TEST);
+	glBlitFramebuffer(0, 0, multiview.width, multiview.height, 0, 0, multiview.width, multiview.height,
+		GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	/* (unknown cached values, all ones, are left to be set again) */
+	glBindFramebuffer(GL_FRAMEBUFFER, gl_state.framebuffer != (GLuint)~0u ? gl_state.framebuffer : 0);
+	if (gl_state.scissor_test == 1)
+		glEnable(GL_SCISSOR_TEST);
+}
+#else
+#define multiview_back_buffer_sync() ((void)0)
+#endif
+
 /* binds the framebuffer for the current targets; returns FALSE if there is
 nothing to draw into */
 static BOOL bind_targets(BOOL *has_depth)
@@ -910,6 +1059,33 @@ static BOOL bind_targets(BOOL *has_depth)
 	/* viewports and clears are in the targets' units (render_target_get) */
 	target_scale[0] = color ? color->target.scale[0] : depth->target.scale[0];
 	target_scale[1] = color ? color->target.scale[1] : depth->target.scale[1];
+#ifdef HALO_VR
+	multiview_bound = FALSE;
+	if (multiview.active)
+	{
+		BOOL color_back = color && color == multiview.color_target;
+		BOOL depth_back = depth && depth == multiview.depth_target;
+
+		if ((color_back || (!color && depth_back)) && (!depth || depth_back))
+		{
+			state_framebuffer(color ? multiview.framebuffer : multiview.depth_framebuffer);
+			multiview_bound = TRUE;
+			if (color)
+				multiview.dirty = TRUE;
+			*has_depth = depth != NULL;
+			return TRUE;
+		}
+		/* the back buffer with another depth target, or the depth buffer
+		under another colour target: drawn single-view into the flat
+		targets, which the layers do not see */
+		if ((color_back || depth_back) && !multiview.mixed_logged)
+		{
+			multiview.mixed_logged = TRUE;
+			platform_log("vr: single-pass stereo: a pass pairs the back buffer or depth buffer with another target "
+				"(%08lx, %08lx); drawn single-view", color ? color->target.data : 0UL, depth ? depth->target.data : 0UL);
+		}
+	}
+#endif
 	state_framebuffer(framebuffer_get(color ? color->target.texture : 0, depth ? depth->target.texture : 0));
 	*has_depth = depth != NULL;
 	return TRUE;
@@ -1898,22 +2074,39 @@ static unsigned long hash_words(const void *data, unsigned long size)
 	return hash;
 }
 
+/* the program's shader for the bound framebuffer: drawing into both eyes'
+layers (bind_targets), its 2-view variant */
 static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immediate)
 {
 	int variant = immediate ? 1 : 0;
+	GLuint *shader = &program->shader[variant];
 
-	if (!program->shader[variant])
+#ifdef HALO_VR
+	if (multiview_bound)
+		shader = &program->multiview_shader[variant];
+#endif
+	if (!*shader)
 	{
-		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
+		char *source;
+
+#ifdef HALO_VR
+		if (multiview_bound)
+			source = nv2a_vertex_shader_to_glsl_views(program->instructions, program->instruction_count,
+				immediate ? 0 : device.vertex_shader->packed_mask, 2);
+		else
+#endif
+		source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
 			immediate ? 0 : device.vertex_shader->packed_mask);
 
-		program->shader[variant] = compile_shader(GL_VERTEX_SHADER, source, "vertex");
+		*shader = compile_shader(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
 			char path[512];
 			FILE *file;
 
-			snprintf(path, sizeof(path), "%s/vs%03lu_%d.glsl", debug_settings.dump_shaders, program->id, variant);
+			/* (2 and 3: the 2-view variants) */
+			snprintf(path, sizeof(path), "%s/vs%03lu_%d.glsl", debug_settings.dump_shaders, program->id,
+				variant + (shader == &program->shader[variant] ? 0 : 2));
 			if ((file = fopen(path, "w")) != NULL)
 			{
 				fputs(source, file);
@@ -1922,7 +2115,7 @@ static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immed
 		}
 		free(source);
 	}
-	return program->shader[variant];
+	return *shader;
 }
 
 typedef char pixel_shader_key_size_assert[sizeof(struct nv2a_pixel_shader_key) % 4 == 0 ? 1 : -1];
@@ -2061,6 +2254,10 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 	entry->texture_scale = glGetUniformLocation(entry->program, "texture_scale");
 	entry->texture_lod_bias = glGetUniformLocation(entry->program, "texture_lod_bias");
 	entry->screen_offset = glGetUniformLocation(entry->program, "screen_offset");
+#ifdef HALO_VR
+	/* (2-view programs only) */
+	entry->constants_view1 = glGetUniformLocation(entry->program, "c_view1");
+#endif
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		char name[8];
@@ -2315,6 +2512,10 @@ static void bind_textures(struct nv2a_pixel_shader_key *key, float texture_scale
 
 			if (target)
 			{
+#ifdef HALO_VR
+				if (multiview.active && target == &multiview.color_target->target)
+					multiview_back_buffer_sync();
+#endif
 				xgpu_texture_describe(texture->Format, texture->Size, &description);
 				gl_texture = target->texture;
 				gl_target = GL_TEXTURE_2D;
@@ -2729,6 +2930,13 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		}
 		entry->constants_serial = constants_serial;
 	}
+#ifdef HALO_VR
+	if (multiview_bound && entry->constants_view1 >= 0 && entry->view1_serial != view1_serial)
+	{
+		glUniform4fv(entry->constants_view1, 8, view1_constants[0]);
+		entry->view1_serial = view1_serial;
+	}
+#endif
 
 	/* the state the other uniforms come from: most draws share it with the
 	draw before them, and so share its uniforms */
@@ -3804,6 +4012,8 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		struct render_target_entry *back_buffer = render_target_get(&device.back_buffer);
 		int window_width, window_height, width, height, x, y;
 
+		/* (presented while the eyes' layers are drawn: the left eye's) */
+		multiview_back_buffer_sync();
 		if (trace_frame())
 			platform_log("present back buffer %08lx texture %u", (unsigned long)device.back_buffer.Data,
 				back_buffer->target.texture);
@@ -3920,6 +4130,8 @@ void halo_vr_resolve_eye(int eye)
 
 	if (!device.gl_ready)
 		return;
+	/* (while the eyes' layers are drawn, the left eye's: multiview_back_buffer_sync) */
+	multiview_back_buffer_sync();
 	back_buffer = render_target_get(&device.back_buffer);
 	vr_resolve_eye(eye, framebuffer_get(back_buffer->target.texture, 0), (int)back_buffer->target.gl_width,
 		(int)back_buffer->target.gl_height);
@@ -3934,6 +4146,8 @@ void halo_vr_resolve_scope(short x0, short y0, short x1, short y1, int shape)
 
 	if (!device.gl_ready)
 		return;
+	/* (while the eyes' layers are drawn, the left eye's: multiview_back_buffer_sync) */
+	multiview_back_buffer_sync();
 	back_buffer = render_target_get(&device.back_buffer);
 	scale = back_buffer->target.scale;
 	/* the pixels its viewport covered (apply_raster_state), as a square */
@@ -3961,6 +4175,10 @@ int halo_vr_bind_current_target(void)
 	a draw of the headset's own needs them bound now) */
 	if (!bind_targets(&has_depth))
 		return 0;
+	/* the eyes' layers take only 2-view programs, which the headset's own
+	single-view draws (the visibility mask) are not: nothing to draw into */
+	if (multiview_bound)
+		return 0;
 	viewport[0] = target_pixel((float)device.viewport.X, 0);
 	viewport[1] = target_pixel((float)device.viewport.Y, 1);
 	viewport[2] = target_pixel((float)(device.viewport.X + device.viewport.Width), 0) - viewport[0];
@@ -3968,6 +4186,89 @@ int halo_vr_bind_current_target(void)
 	memcpy(gl_state.viewport, viewport, sizeof(viewport));
 	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 	return has_depth ? 1 : 0;
+}
+
+/* ---------- single-pass stereo (the multiview block above) */
+
+int halo_vr_multiview_begin(void)
+{
+	struct render_target_entry *color, *depth;
+
+	if (!device.gl_ready)
+		return 0;
+	if (multiview.supported < 0)
+	{
+		GLint views = 0;
+
+		multiview.supported = 0;
+		if (!host_gl_has_extension("GL_OVR_multiview2"))
+		{
+			platform_log("vr: single-pass stereo is off: no GL_OVR_multiview2");
+		}
+		else
+		{
+			glGetIntegerv(GL_MAX_VIEWS_OVR, &views);
+			if (views < 2)
+				platform_log("vr: single-pass stereo is off: GL_MAX_VIEWS_OVR is %d", (int)views);
+			else
+				multiview.supported = 1;
+		}
+	}
+	if (!multiview.supported)
+		return 0;
+	color = render_target_get(&device.back_buffer);
+	depth = render_target_get(&device.depth_buffer);
+	if (!color || !depth || color->target.gl_width != depth->target.gl_width ||
+		color->target.gl_height != depth->target.gl_height)
+	{
+		multiview.supported = 0;
+		platform_log("vr: single-pass stereo is off: the back buffer and depth buffer differ in size");
+		return 0;
+	}
+	/* the back buffer's size follows the eyes' resolution (screen_scale) */
+	if (multiview.width != (GLsizei)color->target.gl_width || multiview.height != (GLsizei)color->target.gl_height)
+	{
+		if (!multiview_create((GLsizei)color->target.gl_width, (GLsizei)color->target.gl_height))
+		{
+			multiview.supported = 0;
+			return 0;
+		}
+	}
+	/* (made now, not in the middle of a draw: multiview_back_buffer_sync) */
+	multiview.back_buffer_framebuffer = framebuffer_get(color->target.texture, 0);
+	multiview.color_target = color;
+	multiview.depth_target = depth;
+	multiview.dirty = FALSE;
+	multiview.active = TRUE;
+	return 1;
+}
+
+void halo_vr_multiview_end(void)
+{
+	/* the next draw binds its targets again (bind_targets); the back buffer
+	keeps what it held, the layers being read by halo_vr_resolve_multiview */
+	multiview.active = FALSE;
+	multiview.dirty = FALSE;
+	multiview_bound = FALSE;
+}
+
+void halo_vr_set_view1_vertex_constants(const float constants[8][4])
+{
+	if (!memcmp(view1_constants, constants, sizeof(view1_constants)))
+		return;
+	memcpy(view1_constants, constants, sizeof(view1_constants));
+	view1_serial++;
+}
+
+void halo_vr_resolve_multiview(void)
+{
+	int eye;
+
+	if (!device.gl_ready || !multiview.framebuffer)
+		return;
+	for (eye = 0; eye < 2; eye++)
+		vr_resolve_eye(eye, multiview.layer_framebuffers[eye], (int)multiview.width, (int)multiview.height);
+	xgpu_gl_state_invalidate();
 }
 #endif
 

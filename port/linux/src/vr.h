@@ -90,6 +90,17 @@ int vr_cinema_eye(int eye, float *offset_units, float *convergence_tangent);
 the eyes, 2 the HUD, 5 the scope (halo_vr.h's _vr_render_pass_*) */
 void vr_pass_mark(int pass, int end);
 
+/* ---------- single-pass stereo (d3d8_gl.c, GL_OVR_multiview2) */
+
+/* 1 if, until halo_vr_multiview_end, the back buffer's draws and clears go to both eyes' layers at once; 0 (nothing changes) without multiview */
+int halo_vr_multiview_begin(void);
+/* draws go to the back buffer again; it keeps what it held before the begin */
+void halo_vr_multiview_end(void);
+/* view 1's (the right eye's) vertex constants c[0..7], the camera; view 0 uses the game's own */
+void halo_vr_set_view1_vertex_constants(const float constants[8][4]);
+/* copies layer 0 into eye 0's image and layer 1 into eye 1's (vr_resolve_eye) */
+void halo_vr_resolve_multiview(void);
+
 /* ---------- aiming with the head (port/linux/game/vr_render.c)
 
 The view's heading is the player's, turned by the right stick (vr.snap_turn
