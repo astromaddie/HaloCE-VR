@@ -408,6 +408,9 @@ struct gl_device
 		unsigned long count;
 		unsigned short index[VISIBILITY_READBACK_TESTS];
 		unsigned short counter[VISIBILITY_READBACK_TESTS];
+		/* the test drew into both eyes' layers at once: every fragment
+		counted twice (halo_vr_multiview_begin) */
+		unsigned char both_views[VISIBILITY_READBACK_TESTS];
 	} readback[STREAM_BUFFER_RING];
 	GLuint visibility_result[VISIBILITY_TEST_SLOTS];
 	GLuint counter_values[VISIBILITY_TEST_SLOTS];
@@ -1639,6 +1642,11 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 		{
 			readback->index[readback->count] = (unsigned short)index;
 			readback->counter[readback->count] = (unsigned short)device.counter_active;
+#ifdef HALO_VR
+			readback->both_views[readback->count] = (unsigned char)multiview_bound;
+#else
+			readback->both_views[readback->count] = 0;
+#endif
 			readback->count++;
 		}
 		return S_OK;
@@ -1687,7 +1695,12 @@ static void visibility_readback_collect(int ring)
 
 	host_gl_read_buffer(readback->buffer, 0, sizeof(device.counter_values), device.counter_values);
 	for (test = 0; test < readback->count; test++)
-		device.visibility_result[readback->index[test]] = device.counter_values[readback->counter[test]];
+	{
+		GLuint count = device.counter_values[readback->counter[test]];
+
+		/* (one eye's worth, as a flare's brightness expects) */
+		device.visibility_result[readback->index[test]] = readback->both_views[test] ? count / 2 : count;
+	}
 	readback->count = 0;
 	readback->copied = FALSE;
 }
