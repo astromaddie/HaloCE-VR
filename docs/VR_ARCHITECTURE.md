@@ -503,6 +503,27 @@ unworn):
 | Opening cutscene (3D screen) | 13.6–16.1 ms | game 5.0–5.9, render 4.7–6.3, end 3.8–4.0 |
 | Gameplay at the start | 16.0–17.0 ms | game 4.9–5.7, render 6.8–7.5 (eyes 3.3–3.6 each), end 3.8–4.0 |
 
+**Performance pass, step 1 (2026-10-05, 82b6d12e+): where the "end" goes.** b30 gameplay,
+unattended, the runtime at 90 Hz (11.1 ms), 1.25× unless said:
+
+| Run | fps | CPU a frame | releases | xrEndFrame | GPU wait |
+| --- | --- | --- | --- | --- | --- |
+| As built | 56 | 13.8–14.1 ms (game 5.1–5.5, render 4.7–4.8, end 3.9) | 2.65 ms | 0.70 ms | — |
+| `vr.timing_gpu` (glFinish before the end) | 46–54 | 10.4–12.7 ms without the wait | 0.23 ms | 0.66 ms | 6–9 ms |
+| `vr.flush_eyes` (glFlush after each eye) | 56–60 | 13.6–14.1 ms | 2.66 ms | 0.64 ms | — |
+| 1.0× (1728²) | 61 | 13.5 ms | 2.69 ms | 0.65 ms | — |
+
+- The "end" is SteamVR's GL binding waiting in `xrReleaseSwapchainImage` for the GPU to finish
+  the frame: with the GPU waited on first, the releases take 0.23 ms. CPU and GPU never overlap
+  across the frame's end.
+- Flushing each eye doesn't help (the GPU isn't waiting for a flush; it's busy), and fewer pixels
+  help only a little (56 → 61 fps): the GPU's time isn't mostly pixels. Mesa's driver threads
+  (`gdrv0` nearly as busy as the game thread, `gl0`) suggest the draw calls themselves, through
+  Zink, are the cost, on the CPU and the GPU alike.
+- So the levers are fewer draw calls per frame (single-pass stereo would halve the eyes'; the
+  per-pass state the game resends), then the game tick. simpleperf can't record in Lepton at
+  the moment (`perf_event_paranoid` refused), so no per-function profile yet.
+
 The budgets are 8.3 ms at 120 Hz, 11.1 ms at 90 and 13.9 ms at 72. Halo **does not hold 120,
 or 90, on this open level** (a30 held 90 in an earlier wear), and needs a performance pass: the
 3.9 ms "end" (SteamVR's GL binding, lesson 38), the per-eye passes and the game tick. Until then

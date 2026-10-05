@@ -272,6 +272,9 @@ static const struct config_setting config_settings[] =
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
 		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
 		"vr.snap_turn). Leave it be." },
+	{ "vr.flush_eyes", _config_boolean, "true", "HALO_VR_FLUSH_EYES", _environment_value, _platform_vr,
+		"Hand each eye's drawing to the GPU as soon as it is done, so the GPU\n"
+		"works while the game draws the rest of the frame (for measuring)." },
 	{ "vr.glass_reflection", _config_real, "0.3", "HALO_VR_GLASS_REFLECTION", _environment_value, _platform_vr,
 		"How much glass reflects in the headset, 0 to 1 of the game's own: the\n"
 		"Warthog's windshield at the game's own is too bright to see through." },

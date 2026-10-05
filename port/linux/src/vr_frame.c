@@ -144,6 +144,8 @@ static struct
 	cannot walk (a vehicle, a cutscene), to be taken up again from where
 	the head is then */
 	int roomscale, room_held;
+	/* vr.flush_eyes (vr_resolve_eye) */
+	int flush_eyes;
 	/* vr_reload_settings's count, for caches elsewhere */
 	int settings_generation;
 	float room_previous[2], room_now[2];
@@ -399,6 +401,7 @@ void vr_initialize(void)
 	vr.weapon_offset[1] = (float)config_real("vr.weapon_offset_up");
 	vr.weapon_offset[2] = (float)config_real("vr.weapon_offset_back");
 	vr.force_render = config_boolean("vr.force_render");
+	vr.flush_eyes = config_boolean("vr.flush_eyes");
 	vr.timing = config_boolean("vr.timing");
 	vr.gpu_passes = config_boolean("vr.timing_gpu_passes");
 	vr.gpu_stamps = config_boolean("vr.timing_gpu_stamps");
@@ -2087,6 +2090,13 @@ void vr_resolve_eye(int eye, unsigned int source, int width, int height)
 		return;
 	if (copy_to_swapchain((unsigned int)eye, source, width, height))
 		vr.eyes_resolved |= 1u << eye;
+	/* vr.flush_eyes: hand each eye to the GPU as soon as it is drawn. Zink
+	holds the frame's work until a flush, and SteamVR's GL binding waits at
+	the frame's end for the GPU to finish it all: without a flush here the
+	GPU starts only then, after all the CPU's work, and the two never
+	overlap */
+	if (vr.flush_eyes)
+		glFlush();
 }
 
 /* writes a swapchain's acquired image (or the HUD's, with its alpha) as a
