@@ -272,6 +272,9 @@ static const struct config_setting config_settings[] =
 		"older file up to date (1: vr.hud_distance and vr.hud_width default to 0,\n"
 		"the HUD mode's own; 2: vr.turn_mode and vr.snap_angle replace\n"
 		"vr.snap_turn). Leave it be." },
+	{ "vr.multiview", _config_boolean, "true", "HALO_VR_MULTIVIEW", _environment_value, _platform_vr,
+		"Draw both eyes in one pass (GL_OVR_multiview2): the game issues each\n"
+		"draw once instead of twice. false draws them one at a time." },
 	{ "vr.flush_eyes", _config_boolean, "true", "HALO_VR_FLUSH_EYES", _environment_value, _platform_vr,
 		"Hand each eye's drawing to the GPU as soon as it is done, so the GPU\n"
 		"works while the game draws the rest of the frame (for measuring)." },

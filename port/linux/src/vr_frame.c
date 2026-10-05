@@ -1069,6 +1069,9 @@ void vr_pass_mark(int pass, int end)
 		pass -= 3;
 	else if (pass == 5)
 		pass = 3;
+	/* both eyes in one pass (vr.multiview, 6) as the left eye's */
+	else if (pass == 6)
+		pass = 0;
 	if (pass < 0 || pass > 3)
 		return;
 	if (pass < 3 && vr.stereo)

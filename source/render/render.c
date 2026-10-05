@@ -351,7 +351,7 @@ static void render_window(
 #ifdef HALO_VR
 	/* an eye's hidden area masked before anything is drawn (the window's
 	target, its depth too, is cleared by now) */
-	if (VR_RENDER_EYE())
+	if (VR_RENDER_EYE() && !VR_RENDER_MULTIVIEW())
 		vr_draw_visibility_mask(vr_render_pass);
 #endif
 #ifdef HALO_VR

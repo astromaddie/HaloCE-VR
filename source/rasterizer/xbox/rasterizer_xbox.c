@@ -418,6 +418,9 @@ symbols in this file:
 #include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
 #include "rasterizer_xbox_internal.h"
 #include "rasterizer_xbox_vertex_shaders.h"
+#ifdef HALO_VR
+#include "halo_vr.h"
+#endif
 
 /* ---------- constants */
 
@@ -2726,6 +2729,103 @@ void rasterizer_set_stencil_mode(
 	return;
 }
 
+#ifdef HALO_VR
+/* the camera's vertex constants (c[-96..-89]): world to clip, the camera's
+position and forward, the view's forward and left */
+static void rasterizer_camera_vertex_constants(
+	const struct render_camera *camera,
+	const struct render_frustum *frustum,
+	real vertex_constants[8][4])
+{
+	short column;
+	short row;
+
+	for (column = 0; column < 4; column++)
+	{
+		for (row = 0; row < 4; row++)
+		{
+			const real *n = frustum->world_to_view.n[row];
+
+			vertex_constants[column][row] =
+				n[0] * frustum->projection_matrix[0][column] +
+				n[1] * frustum->projection_matrix[1][column] +
+				n[2] * frustum->projection_matrix[2][column];
+		}
+		vertex_constants[column][3] +=
+			frustum->projection_matrix[3][column];
+	}
+	vertex_constants[4][0] = camera->position.x;
+	vertex_constants[4][1] = camera->position.y;
+	vertex_constants[4][2] = camera->position.z;
+	vertex_constants[4][3] = 2.0f;
+	vertex_constants[5][0] = camera->forward.i;
+	vertex_constants[5][1] = camera->forward.j;
+	vertex_constants[5][2] = camera->forward.k;
+	vertex_constants[5][3] = 0.5f;
+	vertex_constants[6][0] = frustum->view_to_world.forward.i;
+	vertex_constants[6][1] = frustum->view_to_world.forward.j;
+	vertex_constants[6][2] = frustum->view_to_world.forward.k;
+	vertex_constants[6][3] = 1.0f;
+	vertex_constants[7][0] = frustum->view_to_world.left.i;
+	vertex_constants[7][1] = frustum->view_to_world.left.j;
+	vertex_constants[7][2] = frustum->view_to_world.left.k;
+	vertex_constants[7][3] = 255.9375f;
+	return;
+}
+
+void rasterizer_set_frustum_z(
+	real z_near,
+	real z_far)
+{
+	real vertex_constants[8][4];
+
+	match_assert(
+		"c:\\halo\\SOURCE\\rasterizer\\xbox\\rasterizer_xbox.c",
+		2967,
+		global_d3d_device);
+	render_camera_hack_frustum_z(
+		&global_window_parameters.frustum,
+		z_near,
+		z_far);
+#ifdef HALO_VR
+	/* port: the headset's eyes drawn in one pass (vr.multiview): the window's
+	camera is between them (culling for both); each eye's own camera goes to
+	the vertex programs, view 0's in the usual registers, view 1's beside
+	them (d3d8_gl.c), both with this call's near and far */
+	{
+		struct render_camera view_camera;
+		struct render_frustum view_frustum;
+		real view_constants[8][4];
+		int view;
+
+		for (view = 0; view < 2 && vr_render_view_camera(view, &view_camera, &view_frustum); view++)
+		{
+			render_camera_hack_frustum_z(&view_frustum, z_near, z_far);
+			rasterizer_camera_vertex_constants(&view_camera, &view_frustum, view_constants);
+			if (view == 0)
+			{
+				IDirect3DDevice8_SetVertexShaderConstant(global_d3d_device, -96, view_constants, 8);
+			}
+			else
+			{
+				halo_vr_set_view1_vertex_constants((const float (*)[4])view_constants);
+				return;
+			}
+		}
+	}
+#endif
+	rasterizer_camera_vertex_constants(
+		&global_window_parameters.camera,
+		&global_window_parameters.frustum,
+		vertex_constants);
+	IDirect3DDevice8_SetVertexShaderConstant(
+		global_d3d_device,
+		-96,
+		vertex_constants,
+		8);
+	return;
+}
+#else
 void rasterizer_set_frustum_z(
 	real z_near,
 	real z_far)
@@ -2779,6 +2879,7 @@ void rasterizer_set_frustum_z(
 		8);
 	return;
 }
+#endif
 
 void rasterizer_set_vertex_shader(
 	short vertex_shader_index)

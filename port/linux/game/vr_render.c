@@ -50,6 +50,14 @@ static struct
 	/* a cutscene eye's frustum turned in, in the bounds' units */
 	real cinema_shift[2];
 	real_rectangle2d eye_bounds[2];
+	/* vr.multiview: this frame's world pass draws both eyes at once (the
+	window drawn from the head, its frustum covering both for culling); each
+	eye's camera and frustum for the vertex constants; and whether the
+	driver refused the two-layer target (two passes from then on) */
+	boolean multiview, multiview_failed;
+	real_rectangle2d multiview_bounds;
+	struct render_camera view_cameras[2];
+	struct render_frustum view_frusta[2];
 	/* the HUD pass is drawn from the head's place, turned as its panel is
 	(vr_hud_view), over the panel's field */
 	boolean hud_from_head;
@@ -631,6 +639,81 @@ static boolean scope_window(
 	return TRUE;
 }
 
+/* vr.multiview */
+static boolean vr_multiview_setting(
+	void)
+{
+	static int multiview = -1, generation = -1;
+
+	if (multiview < 0 || generation != vr_settings_generation())
+	{
+		multiview = config_boolean("vr.multiview");
+		generation = vr_settings_generation();
+	}
+	return multiview != 0;
+}
+
+/* vr.multiview: the two eye windows (0 and 1) made one, drawn from between
+the eyes with a field covering both (culling and visibility for the pair;
+each vertex program then takes its eye's camera, rasterizer_set_frustum_z),
+and the windows after them moved up; returns the new count. Unless the
+setting is off or the driver refused the two-layer target before. */
+static short multiview_windows(
+	struct render_window *windows,
+	short window_count)
+{
+	struct render_camera *camera;
+	short index;
+	int eye;
+	real margin;
+
+	if (!vr_multiview_setting() || vr_render.multiview_failed)
+		return window_count;
+	for (eye = 0; eye < 2; eye++)
+	{
+		vr_render.view_cameras[eye] = windows[eye].rasterizer_camera;
+		render_camera_build_frustum(&vr_render.view_cameras[eye], &vr_render.eye_bounds[eye],
+			&vr_render.view_frusta[eye], TRUE);
+	}
+	/* between the eyes, looking as they do (their views are parallel) */
+	camera = &windows[0].rasterizer_camera;
+	camera->position.x = (vr_render.view_cameras[0].position.x + vr_render.view_cameras[1].position.x) * 0.5f;
+	camera->position.y = (vr_render.view_cameras[0].position.y + vr_render.view_cameras[1].position.y) * 0.5f;
+	camera->position.z = (vr_render.view_cameras[0].position.z + vr_render.view_cameras[1].position.z) * 0.5f;
+	windows[0].render_camera = *camera;
+	/* both eyes' fields, a little wider: from between the eyes each edge is
+	seen a few centimetres off where that eye sees it */
+	margin = 0.02f;
+	vr_render.multiview_bounds.x0 = MIN(vr_render.eye_bounds[0].x0, vr_render.eye_bounds[1].x0) - margin;
+	vr_render.multiview_bounds.x1 = MAX(vr_render.eye_bounds[0].x1, vr_render.eye_bounds[1].x1) + margin;
+	vr_render.multiview_bounds.y0 = MIN(vr_render.eye_bounds[0].y0, vr_render.eye_bounds[1].y0) - margin;
+	vr_render.multiview_bounds.y1 = MAX(vr_render.eye_bounds[0].y1, vr_render.eye_bounds[1].y1) + margin;
+	for (index = 1; index + 1 < window_count; index++)
+	{
+		windows[index] = windows[index + 1];
+		vr_render.pass_of_window[index] = vr_render.pass_of_window[index + 1];
+		vr_render.eye_of_window[index] = vr_render.eye_of_window[index + 1];
+	}
+	vr_render.pass_of_window[window_count - 1] = _vr_render_pass_none;
+	vr_render.eye_of_window[window_count - 1] = NONE;
+	vr_render.pass_of_window[0] = _vr_render_pass_multiview;
+	vr_render.eye_of_window[0] = NONE;
+	vr_render.multiview = TRUE;
+	return (short)(window_count - 1);
+}
+
+boolean vr_render_view_camera(
+	int view,
+	struct render_camera *camera,
+	struct render_frustum *frustum)
+{
+	if (!VR_RENDER_MULTIVIEW() || !vr_render.multiview || view < 0 || view > 1)
+		return FALSE;
+	*camera = vr_render.view_cameras[view];
+	*frustum = vr_render.view_frusta[view];
+	return TRUE;
+}
+
 short vr_render_windows(
 	struct render_window *windows,
 	short window_count)
@@ -640,6 +723,7 @@ short vr_render_windows(
 
 	vr_render.stereo = FALSE;
 	vr_render.cinema = FALSE;
+	vr_render.multiview = FALSE;
 	vr_render.scope_shape = 0;
 	for (eye = 0; eye < 5; eye++)
 	{
@@ -758,10 +842,10 @@ short vr_render_windows(
 			windows[2] = scope;
 			vr_render.pass_of_window[2] = _vr_render_pass_scope;
 			vr_render.pass_of_window[3] = _vr_render_pass_hud;
-			return 5;
+			return multiview_windows(windows, 5);
 		}
 	}
-	return 4;
+	return multiview_windows(windows, 4);
 }
 
 void vr_render_window_begin(
@@ -769,6 +853,14 @@ void vr_render_window_begin(
 {
 	vr_render_pass = (vr_render.stereo || vr_render.cinema) && window_index >= 0 && window_index < 5 ?
 		vr_render.pass_of_window[window_index] : _vr_render_pass_none;
+	/* both eyes into the two-layer target; refused, this frame draws the left
+	eye alone (and its right eye is the last frame's) and two passes follow */
+	if (VR_RENDER_MULTIVIEW() && !halo_vr_multiview_begin())
+	{
+		platform_log("vr: no two-layer target for both eyes at once: drawing them one at a time");
+		vr_render.multiview_failed = TRUE;
+		vr_render_pass = _vr_render_pass_left_eye;
+	}
 	vr_pass_mark(vr_render_pass, 0);
 }
 
@@ -776,6 +868,16 @@ void vr_render_window_end(
 	short window_index)
 {
 	vr_pass_mark(vr_render_pass, 1);
+	if (VR_RENDER_MULTIVIEW())
+	{
+		halo_vr_multiview_end();
+		halo_vr_resolve_multiview();
+	}
+	else if (vr_render.multiview && window_index == 0 && vr_render_pass == _vr_render_pass_left_eye)
+	{
+		/* (the two-layer target refused this frame: the left eye alone) */
+		halo_vr_resolve_eye(0);
+	}
 	if ((vr_render.stereo || vr_render.cinema) && window_index >= 0 && window_index < 5 &&
 		vr_render.eye_of_window[window_index] != NONE)
 	{
@@ -792,7 +894,11 @@ void vr_render_window_end(
 void vr_render_frustum_bounds(
 	real_rectangle2d *bounds)
 {
-	if (VR_RENDER_EYE())
+	if (VR_RENDER_MULTIVIEW())
+	{
+		*bounds = vr_render.multiview_bounds;
+	}
+	else if (VR_RENDER_EYE())
 	{
 		*bounds = vr_render.eye_bounds[vr_render_pass];
 	}

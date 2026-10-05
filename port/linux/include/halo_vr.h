@@ -25,6 +25,7 @@ int vr_frame_seconds(double *seconds);
 
 struct render_window;
 struct render_camera;
+struct render_frustum;
 union real_rectangle2d;
 
 enum
@@ -40,12 +41,17 @@ enum
 	/* the zoomed view along a hand-aimed gun, for its scope (resolved as it
 	finishes, before the HUD pass clears the target) */
 	_vr_render_pass_scope,
+	/* both eyes in one pass (vr.multiview: GL_OVR_multiview2), drawn into a
+	two-layer target, each vertex program choosing its eye's camera */
+	_vr_render_pass_multiview,
 };
 
 /* which pass the window being rendered is */
 extern int vr_render_pass;
 
-#define VR_RENDER_EYE() (vr_render_pass == _vr_render_pass_left_eye || vr_render_pass == _vr_render_pass_right_eye)
+#define VR_RENDER_EYE() (vr_render_pass == _vr_render_pass_left_eye || vr_render_pass == _vr_render_pass_right_eye || \
+	vr_render_pass == _vr_render_pass_multiview)
+#define VR_RENDER_MULTIVIEW() (vr_render_pass == _vr_render_pass_multiview)
 #define VR_RENDER_HUD() (vr_render_pass == _vr_render_pass_hud)
 #define VR_RENDER_SCOPE() (vr_render_pass == _vr_render_pass_scope)
 /* a view of the world for the headset alone: no HUD drawn over it, and no
@@ -67,6 +73,19 @@ void vr_render_window_begin(short window_index);
 void vr_render_window_end(short window_index);
 /* render_player_frame: the eye's frustum bounds replace the window's */
 void vr_render_frustum_bounds(union real_rectangle2d *bounds);
+/* rasterizer_set_frustum_z in the multiview pass: eye `view`'s camera and
+frustum this frame (the window's camera is the head's, its frustum covering
+both eyes for culling); FALSE outside that pass */
+boolean vr_render_view_camera(int view, struct render_camera *camera, struct render_frustum *frustum);
+/* port/linux/src/d3d8_gl.c: view 1's camera vertex constants (Xbox
+c[-96..-89]) for multiview programs; view 0's are the ordinary ones */
+void halo_vr_set_view1_vertex_constants(const float constants[8][4]);
+/* port/linux/src/d3d8_gl.c: the back buffer's draws go to a two-layer
+target, both eyes at once, until the end (0: the driver can't); then each
+layer into its eye's image */
+int halo_vr_multiview_begin(void);
+void halo_vr_multiview_end(void);
+void halo_vr_resolve_multiview(void);
 /* the camera the first-person weapon is posed from: the head's in stereo */
 void vr_render_weapon_camera(struct render_camera *camera);
 /* trigger_create_projectiles: a player's weapon fired a projectile (the
@@ -161,6 +180,7 @@ void halo_vr_resolve_scope(short x0, short y0, short x1, short y1, int shape);
 #define VR_RENDER_EYE() 0
 #define VR_RENDER_HUD() 0
 #define VR_RENDER_SCOPE() 0
+#define VR_RENDER_MULTIVIEW() 0
 #define VR_RENDER_VIEW() 0
 #define VR_RENDER_REPEAT() 0
 
