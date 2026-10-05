@@ -166,6 +166,9 @@ symbols in this file:
 #include "rasterizer/xbox/rasterizer_xbox_plasma_energy.h"
 #include "rasterizer/xbox/rasterizer_xbox_water.h"
 #include "rasterizer/xbox/shader_transparent_chicago_preprocessor.h"
+#ifdef HALO_VR
+#include "halo_vr.h"
+#endif
 
 /* ---------- constants */
 
@@ -3020,10 +3023,32 @@ void rasterizer_transparent_geometry_group_draw(
 								}
 								pixel_shader.rgb_inputs[2] = 0x0C0C0D0D;
 								pixel_shader.rgb_outputs[2] = 0xD;
+#ifdef HALO_VR
+								/* port: in the headset glass reflects less
+								(vr.glass_reflection): the Warthog's windshield
+								was too bright to see through */
+								{
+									real scale = vr_render_glass_reflection_scale();
+									real_argb_color perpendicular = glass->reflection_view_perpendicular_color;
+									real_argb_color parallel = glass->reflection_view_parallel_color;
+
+									perpendicular.alpha *= scale;
+									perpendicular.red *= scale;
+									perpendicular.green *= scale;
+									perpendicular.blue *= scale;
+									parallel.alpha *= scale;
+									parallel.red *= scale;
+									parallel.green *= scale;
+									parallel.blue *= scale;
+									pixel_shader.constant_0[3] = real_argb_color_to_pixel32(&perpendicular);
+									pixel_shader.constant_1[3] = real_argb_color_to_pixel32(&parallel);
+								}
+#else
 								pixel_shader.constant_0[3] = real_argb_color_to_pixel32(
 									&glass->reflection_view_perpendicular_color);
 								pixel_shader.constant_1[3] = real_argb_color_to_pixel32(
 									&glass->reflection_view_parallel_color);
+#endif
 								pixel_shader.alpha_outputs[3] = 0xC00;
 								pixel_shader.rgb_outputs[3] = 0xC00;
 								pixel_shader.rgb_outputs[4] = 0xC00;

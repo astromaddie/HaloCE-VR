@@ -170,6 +170,16 @@ void hs_print(
 	 * text, from a scenario script or typed at this build's console, reads arguments
 	 * that were never passed. A corrected build should print it through "%s".
 	 * Source-policy approval pending (2026-09-27 audit). */
+#ifdef HALO_VR
+	/* port: in the headset a level script's prints (the beta's debugging,
+	green over cutscenes as a level loads) go to debug.txt only, unless
+	game.console_log is "all" */
+	if (!terminal_shows(_terminal_message_chatter))
+	{
+		error(_error_log, "%s", message);
+		return;
+	}
+#endif
 	terminal_printf(global_real_argb_green, message);
 
 	return;

@@ -214,6 +214,25 @@ static void local_pose(const struct halo_xr_pose *pose, XrPosef *out)
 
 	rotate_y(xr.recentre_yaw, pose->position, position);
 	quaternion_multiply(yaw, pose->orientation, orientation);
+	/* a unit quaternion whatever the guest sent: one that is not makes
+	xrEndFrame refuse the whole frame (XR_ERROR_POSE_INVALID) */
+	{
+		float length = sqrtf(orientation[0] * orientation[0] + orientation[1] * orientation[1] +
+			orientation[2] * orientation[2] + orientation[3] * orientation[3]);
+
+		if (length > 1e-6f)
+		{
+			orientation[0] /= length;
+			orientation[1] /= length;
+			orientation[2] /= length;
+			orientation[3] /= length;
+		}
+		else
+		{
+			orientation[0] = orientation[1] = orientation[2] = 0.0f;
+			orientation[3] = 1.0f;
+		}
+	}
 	out->position.x = position[0] + xr.recentre_position[0];
 	out->position.y = position[1] + xr.recentre_position[1];
 	out->position.z = position[2] + xr.recentre_position[2];

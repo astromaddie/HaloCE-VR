@@ -478,3 +478,22 @@ the Frame's display at 72 Hz, which Halo held before.
 | 10 | The image isn't sharp | Eye images at the render size, anisotropic filtering, and `vr.resolution_scale` 1.25 by default (2160 square, about the panels; settings version 3 moves an untouched 1.5 to it), which should also give open levels the frame time for 90 Hz. **Not yet worn** |
 | Wish | An immersive main menu around the ring | Not started. The menu scene has no player window, so it needs its own stereo path; the world-locked menu panel above is the piece it was missing |
 
+## Wear feedback, 2026-10-05 (round 2, on 69b76356)
+
+"Definitely better than before." The play log
+(`lepton-steamlaunch-3667167125.log`) shows `xrEndFrame failed: XR_ERROR_POSE_INVALID` on
+564 frames.
+
+| # | Report | Status |
+| --- | --- | --- |
+| 1 | Can't strafe on foot (VR controls and room-scale off didn't help) | A regression from the driving work: the drive throttle zeroed the stick's sideways whenever `vr.vehicle_steering` was "drive", on foot too. Now only for a driver. **Not yet worn** |
+| 2 | The Warthog's windshield too reflective to see through | Glass reflects `vr.glass_reflection` (0.3) of the game's own in the headset (`rasterizer_xbox_transparent_geometry.c`, all glass shaders). **Not yet worn** |
+| 3 | No laser on the main or pause menu | The beam's pose wasn't a unit quaternion (`look_rotation` from an unnormalised direction), so SteamVR refused every frame that drew it. `look_rotation` normalises, and the host normalises every layer pose. The beam ends 2 cm short of the panel and the dot lies 1 cm off it (a quad through another hides in it). **Not yet worn** |
+| 4 | Green debug text over cutscenes as a map loads | The level scripts' `print` (the beta's debugging, `hs_print`): in the headset it goes to debug.txt only, unless `game.console_log` is "all". **Not yet worn** |
+| 5 | Silent Cartographer's opening cutscenes drop frames | Not yet measured |
+| 6 | Wish: anti-aliasing | Not started (MSAA on the eye targets would cost frame time that 90 Hz doesn't have yet) |
+
+**120 Hz standard** (cross-port, 2026-10-05: 120 Hz at about 2160² an eye, falling back to 90
+then 72). Halo hasn't been measured against it. Silent Cartographer ran at about 46 fps on
+90 Hz at 1.5× before the 1.25× default.
+

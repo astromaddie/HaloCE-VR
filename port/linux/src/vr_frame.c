@@ -1591,6 +1591,18 @@ static void look_rotation(const float forward[3], const float up[3], float out[4
 {
 	float z[3] = { -forward[0], -forward[1], -forward[2] }, x[3], y[3], length, trace;
 
+	/* (any length of `forward`: a basis from an unnormalised one makes a
+	quaternion that is not a unit, and the runtime refuses the whole frame
+	for one such layer pose with XR_ERROR_POSE_INVALID) */
+	length = sqrtf(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
+	if (length < 1e-6f)
+	{
+		out[0] = out[1] = out[2] = 0.0f;
+		out[3] = 1.0f;
+		return;
+	}
+	z[0] /= length; z[1] /= length; z[2] /= length;
+
 	x[0] = up[1] * z[2] - up[2] * z[1];
 	x[1] = up[2] * z[0] - up[0] * z[2];
 	x[2] = up[0] * z[1] - up[1] * z[0];
@@ -2542,8 +2554,10 @@ static void place_pointer(struct halo_xr_layers *layers)
 	layers->flags |= HALO_XR_LAYER_POINTER;
 	if (!(vr.frame.hand_valid[vr.weapon_hand] & 2))
 		return;
+	/* (the beam ends 2 cm short of the panel, the dot 1 cm off it: a quad
+	through another is depth-composited by SteamVR, and hides in it) */
 	for (axis = 0; axis < 3; axis++)
-		along[axis] = layers->pointer_pose.position[axis] - aim->position[axis];
+		along[axis] = vr.pointer_hit[axis] + out[axis] * 0.02f - aim->position[axis];
 	length = sqrtf(along[0] * along[0] + along[1] * along[1] + along[2] * along[2]);
 	if (length < 0.05f)
 		return;

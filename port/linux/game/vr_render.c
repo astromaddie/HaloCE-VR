@@ -153,7 +153,8 @@ enum
 	_vr_vehicle_turret,
 };
 
-/* how a driver is steered this frame (vr.vehicle_steering and the vehicle):
+/* how a driver is steered this frame (vr.vehicle_steering and the vehicle;
+the setting itself for anyone but a driver, so callers check the seat):
 drive and wheel apply to the Warthog and the Ghost; a flier (the Banshee)
 flies where the hand points; the Scorpion keeps the game's own driving, its
 cannon aimed by the head */
@@ -219,8 +220,12 @@ void vr_render_drive_throttle(
 	float steer, pedals;
 	int wheel;
 
-	if (local_player_index != local_player_get_next(NONE) || !vr_active() || cinematic_in_progress())
+	/* (only a driver: on foot the stick's sideways is the player's strafe) */
+	if (local_player_index != local_player_get_next(NONE) || !vr_active() || cinematic_in_progress() ||
+		!vr_render.seat.seated || !vr_render.seat.driver)
+	{
 		return;
+	}
 	steering = vr_driver_steering();
 	if (steering != _vr_steering_drive && steering != _vr_steering_wheel)
 		return;
@@ -866,6 +871,22 @@ void vr_render_room_scale(
 		}
 	}
 	*position = clipped;
+}
+
+real vr_render_glass_reflection_scale(
+	void)
+{
+	static real scale = -1.0f;
+	static int generation = -1;
+
+	if (!vr_active())
+		return 1.0f;
+	if (scale < 0.0f || generation != vr_settings_generation())
+	{
+		scale = (real)config_real("vr.glass_reflection");
+		generation = vr_settings_generation();
+	}
+	return scale;
 }
 
 int vr_render_motion_sensor_yaw(

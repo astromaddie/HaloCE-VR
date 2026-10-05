@@ -120,6 +120,9 @@ void vr_render_room_scale(long biped_index, union real_point3d *position, real h
 "drive" or "wheel" (no strafing; with the hands on the wheel, the triggers) */
 union real_vector2d;
 void vr_render_drive_throttle(short local_player_index, union real_vector2d *throttle);
+/* glass's reflection in the headset, a scale (vr.glass_reflection; 1 off
+the headset) */
+real vr_render_glass_reflection_scale(void);
 /* motion_sensor_update: the yaw (radians) the first local player's motion
 sensor turns with, the head's, not the hand's aim; 0 to leave the
 facing's */
