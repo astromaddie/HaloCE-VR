@@ -490,10 +490,21 @@ the Frame's display at 72 Hz, which Halo held before.
 | 2 | The Warthog's windshield too reflective to see through | Glass reflects `vr.glass_reflection` (0.3) of the game's own in the headset (`rasterizer_xbox_transparent_geometry.c`, all glass shaders). **Not yet worn** |
 | 3 | No laser on the main or pause menu | The beam's pose wasn't a unit quaternion (`look_rotation` from an unnormalised direction), so SteamVR refused every frame that drew it. `look_rotation` normalises, and the host normalises every layer pose. The beam ends 2 cm short of the panel and the dot lies 1 cm off it (a quad through another hides in it). **Not yet worn** |
 | 4 | Green debug text over cutscenes as a map loads | The level scripts' `print` (the beta's debugging, `hs_print`): in the headset it goes to debug.txt only, unless `game.console_log` is "all". **Not yet worn** |
-| 5 | Silent Cartographer's opening cutscenes drop frames | Not yet measured |
+| 5 | Silent Cartographer's opening cutscenes drop frames | Measured (below): 13.6–16.1 ms of CPU a frame, over 90 Hz's budget. Needs the performance pass |
 | 6 | Wish: anti-aliasing | Not started (MSAA on the eye targets would cost frame time that 90 Hz doesn't have yet) |
 
 **120 Hz standard** (cross-port, 2026-10-05: 120 Hz at about 2160² an eye, falling back to 90
-then 72). Halo hasn't been measured against it. Silent Cartographer ran at about 46 fps on
-90 Hz at 1.5× before the 1.25× default.
+then 72). Measured unattended on 5a883495 at 1.25× (2160²), b30 (The Silent Cartographer), the
+headset idle (paced at 45 fps, so only the CPU time per frame counts; its GPU may clock down
+unworn):
+
+| Scene | CPU a frame | of which |
+| --- | --- | --- |
+| Opening cutscene (3D screen) | 13.6–16.1 ms | game 5.0–5.9, render 4.7–6.3, end 3.8–4.0 |
+| Gameplay at the start | 16.0–17.0 ms | game 4.9–5.7, render 6.8–7.5 (eyes 3.3–3.6 each), end 3.8–4.0 |
+
+The budgets are 8.3 ms at 120 Hz, 11.1 ms at 90 and 13.9 ms at 72. Halo **does not hold 120,
+or 90, on this open level** (a30 held 90 in an earlier wear), and needs a performance pass: the
+3.9 ms "end" (SteamVR's GL binding, lesson 38), the per-eye passes and the game tick. Until then
+the Frame's display is best at 72 Hz for open levels. A worn measurement should confirm this.
 
