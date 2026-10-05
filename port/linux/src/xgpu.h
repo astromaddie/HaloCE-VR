@@ -79,6 +79,8 @@ NORMPACKED3 32-bit integers and unpacked in the shader. Returns a malloc'd
 string. */
 char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instruction_count,
 	unsigned long packed_attribute_mask);
+char *nv2a_vertex_shader_to_glsl_views(const DWORD *instructions, unsigned long instruction_count,
+	unsigned long packed_attribute_mask, int view_count);
 
 /* ---------- pixel shaders */
 
