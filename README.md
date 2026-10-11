@@ -65,43 +65,57 @@ These are the default VR controls. Left-handed mode swaps the weapon-hand trigge
 | View, held 1 second | Recentre position and heading |
 | View, held 3 seconds | Recentre and reset standing height |
 
-## Game data and installation
+## Build the VR APK
 
-You need the `maps/` folder from your own Xbox Halo: Combat Evolved disc image (`.iso` or `.xiso`). PC Halo and MCC data aren't the input for this port.
+Build on x86-64 Linux, macOS, or x86-64 Ubuntu under Windows WSL2. The NDK's Linux host tools are x86-64; the Steam Frame is the ARM64 run target, not an assumed build host. Apple Silicon Macs need Rosetta for the NDK’s x86-64 tools.
 
-Extract the maps on your computer:
+On Windows, install Ubuntu with [WSL2](https://learn.microsoft.com/windows/wsl/install), then install a Linux JDK 17 or later and the Linux Android SDK Command-Line Tools inside Ubuntu. For example, install OpenJDK with `sudo apt update && sudo apt install -y openjdk-17-jdk`, and download/extract the Linux SDK Command-Line Tools under `$HOME/Android/Sdk`. Do not point `JAVA_HOME` or `ANDROID_HOME` at Windows installations. Keep the checkout and SDK under the WSL Linux home; for example, use `~/src/HaloCE-VR`. The official [Android SDK command-line tools](https://developer.android.com/tools/sdkmanager) and [NDK downloads](https://developer.android.com/ndk/downloads) pages explain the Linux packages. See also the [Android toolchain requirements](port/android/README.md#requirements).
 
-```bash
-python3 tools/steam_frame/extract_maps.py /path/to/Halo.iso /path/to/extracted-halo
-```
-
-After building the APK below, connect the Frame over USB and start **Lepton Development** from its Steam library. The deploy helper needs `adb`, SSH access and `rsync`. Set your own Frame address rather than using the helper's development default:
+You need Python 3, Ninja, CMake, JDK 17 or later, Android SDK platform 35 and an NDK, plus a host `clang` with the `arm64_32` target. `configure.py` selects the newest installed NDK unless `--android-ndk` is supplied. The build needs internet access for public dependencies, but no Xbox SDK, Halo maps or game data. Set `ANDROID_HOME` to your SDK and `JAVA_HOME` to your JDK. Common SDK locations are `$HOME/Library/Android/sdk` on macOS and `$HOME/Android/Sdk` on Linux or WSL2. After installing the SDK packages, accept their licenses with `sdkmanager --licenses`.
 
 ```bash
-export FRAME_HOST="steamos@YOUR_FRAME_ADDRESS"
-tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-launch
-```
-
-Register the APK once as a **HaloCEVR** Lepton devkit title, following the [build and deploy instructions](docs/VR_ARCHITECTURE.md#build-and-deploy). Launch it from the Steam library so the controllers bind correctly. Later deployments update that title's APK.
-
-Maps live in `~/Documents/HaloCE/maps` on SteamOS, exposed as `/sdcard/Documents/HaloCE/maps` inside Lepton. `config.toml` and saves use the same HaloCE folder, outside Lepton's disposable app storage.
-
-## Build the VR version
-
-You'll need Python 3, ninja, CMake, an Android SDK and NDK, a JDK 17 or later, and a clang with the `arm64_32` target. See the [Android toolchain requirements](port/android/README.md#requirements). You don't need the Xbox SDK or game data to compile.
-
-```bash
+mkdir -p "$HOME/src"
+cd "$HOME/src"
 git clone https://github.com/astromaddie/HaloCE-VR.git
 cd HaloCE-VR
-export ANDROID_HOME="/path/to/android-sdk"
+export ANDROID_HOME="/path/to/android-sdk"  # Common paths are listed above.
 export JAVA_HOME="/path/to/jdk-17"
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-35"
+sdkmanager --licenses
 python3 configure.py --vr --lto=off --pgo=off
 ninja android_apk
 ```
 
-The APK is `port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk`, with package name `com.halo.decomp.vr`. The first build downloads its public dependencies. If the tools aren't found automatically, use `--android-ndk /path/to/ndk` and `--android-guest-cc /path/to/clang`.
+The VR APK is `port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk`, package `com.halo.decomp.vr`. `configure.py` chooses the newest NDK under `ANDROID_HOME` unless you pass `--android-ndk`; pass `--android-guest-cc /path/to/clang` if the `arm64_32` compiler isn't found automatically. `--vr` selects the Frame/OpenXR build; the flat Android target is a different APK. The repository contains source, not a prebuilt VR APK. The exact checked revision and prior full-build result are recorded in [PR0 readiness](docs/PR0_READINESS.md) and [its metadata](docs/PR0_METADATA.json).
 
-`--vr` matters: without it, you build the flat Android app. The inherited CI also builds the flat ports, so its artifacts aren't VR APKs. Automatic flat-build releases and Discord notifications are opt-in in this fork. This update publishes source, with no new prebuilt VR release.
+## Game data, install and play
+
+You need the `maps/` folder from your own Xbox Halo: Combat Evolved disc image (`.iso` or `.xiso`). PC Halo and MCC data aren't inputs for this port. Extract the maps on the build computer. In WSL2, a Windows file such as `C:\Users\you\Backups\Halo.iso` is reachable at `/mnt/c/Users/you/Backups/Halo.iso`; copy it into the Linux filesystem first if you prefer:
+
+```bash
+python3 tools/steam_frame/extract_maps.py "/mnt/c/Users/you/Backups/Halo.iso" /path/to/extracted-halo
+```
+
+For the first Steam entry, copy the APK to a folder and use Valve's public [SteamOS Devkit Client upload flow](https://partner.steamgames.com/doc/steamhardware/steamframe/loadgames): pair the Frame with the Devkit Client, open **Title Upload**, set **Name** to `HaloCEVR`, **Local Folder** to the folder containing the APK, **Start Command** to `HaloCE-VR.apk`, and **Runtime** to **Android**, then upload. This creates the library entry. For example:
+
+```bash
+mkdir -p .frame-upload/halo
+cp port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk .frame-upload/halo/HaloCE-VR.apk
+```
+
+On Windows, copy `.frame-upload/halo` to your Windows Downloads folder (available inside WSL at `/mnt/c/Users/YOUR_WINDOWS_USERNAME/Downloads/`), then select that copied folder in the Devkit Client.
+
+For later builds, or to copy the maps, enable SSH to the Frame and set its address. The build computer needs OpenSSH (`ssh`, `scp`) and `rsync`; `--no-adb` skips the USB ADB connection while it copies maps and refreshes the APK in an existing `~/devkit-game/HaloCEVR` title directory:
+
+```bash
+export FRAME_HOST="steamos@FRAME_HOST_OR_IP"
+tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-adb
+```
+
+If the Devkit Client created the title under a different directory, upload each updated APK with that client. For ADB development installs, install Android SDK platform-tools (`adb`), connect the Frame by USB, start **Lepton Development** from its Steam library, and omit `--no-adb`; this helper expects the USB ADB device name `frame`. For play, launch **HaloCEVR** from the Steam library so SteamVR supplies controller input. The helper does not launch the game through ADB in `--no-adb` mode.
+
+Maps live in `~/Documents/HaloCE/maps` on SteamOS, exposed as `/sdcard/Documents/HaloCE/maps` inside Lepton. `config.toml` and saves use the same HaloCE folder, outside Lepton's disposable app storage.
 
 ## Credits and licenses
 

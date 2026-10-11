@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Installs and starts the VR build on a Steam Frame over USB.
+# Updates the VR title and optionally installs/starts the development copy.
 #
-#   tools/steam_frame/deploy.sh [--maps DIR] [--config KEY=VALUE ...] [--no-install] [--no-launch]
+#   tools/steam_frame/deploy.sh [--maps DIR] [--config KEY=VALUE ...]
+#       [--no-install] [--no-launch] [--no-adb]
 #
 # The game's data, settings and saves live in the headset's Documents/HaloCE
 # (Android's /sdcard/Documents/HaloCE in Lepton), which a Lepton reset keeps;
@@ -9,23 +10,24 @@
 # makes one from your disc image). --config sets a [section] key in its
 # config.toml, e.g. --config vr.dump_frame=200.
 #
-# Before running it, start "Lepton Development" from the Frame's Steam library.
+# For ADB install/launch, start "Lepton Development" from the Frame's Steam library.
+# --no-adb keeps map/config/title updates on SSH and skips Lepton Development.
 #
-# To play without the Mac, register the build once as a Lepton devkit title, which
-# shows in the Steam library as HaloCEVR (docs/VR_ARCHITECTURE.md); deploy.sh then
-# keeps its copy of the APK up to date.
-# FRAME_HOST (default steamos@10.86.200.233) is the headset over USB networking.
+# Create the Steam library entry once with Valve's public SteamOS Devkit Client
+# Title Upload flow; deploy.sh refreshes the APK when it is stored under
+# ~/devkit-game/HaloCEVR.
+# FRAME_HOST is the Frame's SSH target, for example steamos@192.0.2.10.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 apk="$root/port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk"
 package="com.halo.decomp.vr"
-frame_host="${FRAME_HOST:-steamos@10.86.200.233}"
-adb_bin="${ADB:-${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb}"
-[[ -x "$adb_bin" ]] || adb_bin="$(command -v adb)"
+frame_host="${FRAME_HOST:-}"
+adb_bin="${ADB:-${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}/platform-tools/adb}"
 maps=""
 install=1
 launch=1
+use_adb=1
 settings=()
 
 while (($#)); do
@@ -34,18 +36,33 @@ while (($#)); do
         --config) settings+=("$2"); shift 2 ;;
         --no-install) install=0; shift ;;
         --no-launch) launch=0; shift ;;
+        --no-adb) use_adb=0; shift ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
     esac
 done
 
-# Android in Lepton: forward its adb port over the USB device's
-"$adb_bin" start-server >/dev/null
-"$adb_bin" -s frame forward tcp:5555 tcp:5555 >/dev/null
-"$adb_bin" connect 127.0.0.1:5555 >/dev/null
+if [[ -z "$frame_host" ]]; then
+    echo 'Set FRAME_HOST to your Steam Frame SSH target.' >&2
+    exit 2
+fi
+
+if ((use_adb)); then
+    if [[ ! -x "$adb_bin" ]]; then
+        adb_bin="$(command -v adb || true)"
+    fi
+    [[ -n "$adb_bin" ]] || { echo 'Set ADB or add adb to PATH.' >&2; exit 2; }
+fi
+
 device=127.0.0.1:5555
-if ! "$adb_bin" -s "$device" shell true 2>/dev/null; then
-    echo 'Start "Lepton Development" from the Frame'"'"'s Steam library, then retry.' >&2
-    exit 1
+if ((use_adb)); then
+    # Android in Lepton: forward its adb port over the USB device.
+    "$adb_bin" start-server >/dev/null
+    "$adb_bin" -s frame forward tcp:5555 tcp:5555 >/dev/null
+    "$adb_bin" connect 127.0.0.1:5555 >/dev/null
+    if ! "$adb_bin" -s "$device" shell true 2>/dev/null; then
+        echo 'Start "Lepton Development" from the Frame'"'"'s Steam library, then retry.' >&2
+        exit 1
+    fi
 fi
 
 if [[ -n "$maps" ]]; then
@@ -79,14 +96,16 @@ PY
 fi
 
 if ((install)); then
-    "$adb_bin" -s "$device" install -r "$apk" | grep -i -E 'success|fail'
+    if ((use_adb)); then
+        "$adb_bin" -s "$device" install -r "$apk" | grep -i -E 'success|fail'
+    fi
     # the Steam library's HaloCEVR title (a Lepton devkit game) runs its own copy
     if ssh "$frame_host" 'test -d ~/devkit-game/HaloCEVR'; then
         scp -q "$apk" "$frame_host:devkit-game/HaloCEVR/HaloCE-VR.apk" && echo "updated the HaloCEVR Steam title"
     fi
 fi
 
-if ((launch)); then
+if ((launch && use_adb)); then
     "$adb_bin" -s "$device" shell am force-stop "$package"
     "$adb_bin" -s "$device" logcat -c
     "$adb_bin" -s "$device" shell am start -n "$package/com.halo.decomp.LauncherActivity" >/dev/null

@@ -66,25 +66,33 @@ supersedes the old performance advice and pending headset tests.
 
 ## Build and deploy
 
+Build-host choices, prerequisites and the full quick start are in the [README](../README.md#build-the-vr-apk). This recorded route uses Bash on x86-64 Linux, macOS (Rosetta on Apple Silicon), or x86-64 Ubuntu under Windows WSL2. The Frame itself is ARM64 and is the run target.
+
 ```bash
 export ANDROID_HOME="/path/to/android-sdk"
 export JAVA_HOME="/path/to/jdk-17"
-export FRAME_HOST="steamos@YOUR_FRAME_ADDRESS"
 python3 configure.py --lto=off --pgo=off --vr
 ninja android_apk          # port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk
-python3 tools/steam_frame/extract_maps.py "Halo.iso" /path/to/extracted-halo
-tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-launch
+python3 tools/steam_frame/extract_maps.py /path/to/Halo.iso /path/to/extracted-halo
 ```
 
-**To play** on the headset alone, launch **HaloCEVR** from the Steam library. It is a Lepton
-devkit title running `~/devkit-game/HaloCEVR/HaloCE-VR.apk`, and `deploy.sh` refreshes that
-copy. To register it on another headset, copy the APK there, then run:
+For a first Steam library entry, use Valve's [SteamOS Devkit Client Title Upload](https://partner.steamgames.com/doc/steamhardware/steamframe/loadgames). Name the entry `HaloCEVR`, upload a folder containing the APK, set its Start Command to the APK filename, and choose the Android runtime. For example, stage the built APK as `HaloCE-VR.apk` before selecting that folder in the client.
 
 ```bash
-ssh "$FRAME_HOST" 'mkdir -p ~/devkit-game/HaloCEVR'
-scp port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk "$FRAME_HOST:devkit-game/HaloCEVR/HaloCE-VR.apk"
-ssh "$FRAME_HOST" 'cd ~/devkit-utils && python3 steam-client-create-shortcut --parms "{\"gameid\": \"HaloCEVR\", \"directory\": \"/home/steamos/devkit-game/HaloCEVR\", \"force_appid\": \"\", \"argv\": [\"HaloCE-VR.apk\"], \"env\": {}, \"settings\": {\"steam_play\": \"1\", \"compat_tool\": \"lepton\"}, \"lepton_args\": \"\"}"'
+mkdir -p .frame-upload/halo
+cp port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk .frame-upload/halo/HaloCE-VR.apk
 ```
+
+On Windows, copy `.frame-upload/halo` to your Windows Downloads folder (available inside WSL at `/mnt/c/Users/YOUR_WINDOWS_USERNAME/Downloads/`), then select that copied folder in the Devkit Client.
+
+To refresh an existing entry and copy maps, set your Frame's SSH address and run `deploy.sh`. Its `--no-adb` option uses SSH/`rsync` only; it also updates the title APK when the expected title directory exists. If the Devkit Client uses a different folder, upload the new APK through the client again.
+
+```bash
+export FRAME_HOST="steamos@FRAME_HOST_OR_IP"
+tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-adb
+```
+
+For ADB development installs, start **Lepton Development**, connect over USB, and omit `--no-adb`; the helper expects the attached device to appear as `frame`. To play, launch **HaloCEVR** from the Frame's Steam library so SteamVR supplies controller input. ADB launches are for development only and do not provide the Steam title's controller setup.
 
 **The refresh rate** follows the Steam Frame's display setting: SteamVR offers the app only
 the rate it is on.
