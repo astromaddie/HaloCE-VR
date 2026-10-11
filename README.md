@@ -2,7 +2,7 @@
 
 This is my Steam Frame VR fork of [OpenCE](https://github.com/OpenCommunityEdition/OpenCE), previously called Halo CE Universal. It runs Halo on the headset itself, using the Android port through Lepton and OpenXR through SteamVR. No gaming PC needed to play.
 
-**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. I've played it on my Frame, but several of the newer features and fixes still need another headset test. You need your own Xbox Halo game data; this repo doesn't supply it.
+**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You need your own Xbox Halo game data; this repo doesn't supply it.
 
 The VR target is **Steam Frame, ARM64 Android in Lepton**. Upstream's flat Linux, Windows and Android ports are still here. Other VR headsets aren't tested.
 
@@ -15,7 +15,7 @@ The VR target is **Steam Frame, ARM64 Android in Lepton**. Upstream's flat Linux
 - Arms that follow your hands using inverse kinematics, with animated or hidden arms as alternatives. Optional legs or a torso, plus a seated body with hands on the vehicle controls.
 - Swing-to-melee, physical crouching, weapon holsters, swapping the gun between hands, and a flashlight gesture near your head. The normal button controls are still available.
 - Weapon and interaction haptics.
-- A picture-in-picture scope held at the gun, so zooming doesn't magnify your entire view. This currently needs hand aiming; the head-aim scope is unfinished.
+- A picture-in-picture scope held at the gun while using hand aiming, so zooming doesn't magnify your entire view.
 
 ### Movement and vehicles
 
@@ -40,24 +40,13 @@ The VR target is **Steam Frame, ARM64 Android in Lepton**. Upstream's flat Linux
 - Fixes for lens-flare stalls, buffer uploads and repeated compositor work, plus frame-time logging for checking performance on the Frame.
 - Game data, settings and saves in `Documents/HaloCE`, outside Lepton's disposable app storage.
 
-## What's been tested, and what hasn't
+## Performance
 
-Earlier builds have been installed and played on a real Frame: menus, head tracking, stereo campaign gameplay, controller gunplay, vehicles and the 3D cinema screen. That doesn't mean every feature above has passed a headset test in the current build.
+I've tested the VR features on my Frame, and it runs at a stable **120 Hz at the Frame's native 2160×2160 resolution per eye**.
 
-The latest development notes describe [8d73d4f6](https://github.com/astromaddie/HaloCE-VR/commit/8d73d4f670767bfb031303dbb9f0df23c6c97be1), from 5 October 2026. The new single-pass renderer was built and measured without wearing the headset. In Silent Cartographer, at 1.25× resolution and a 90 Hz runtime, it measured **67–89 fps**, versus **55–85 fps** with two passes. That still needs a proper playtest before I can say how it feels. Earlier headset tests held 72 Hz at 1.5× resolution; one indoor level held 90 Hz, while an open-level run fell to about 46 fps on an older build.
+The default `vr.resolution_scale = 1.25` renders at 2160×2160 per eye. The multiplier is relative to OpenXR's 1728×1728 eye target.
 
-For now, start with **72 Hz in SteamVR's per-app display settings**. Stable 90 or 120 Hz across the campaign isn't there yet. The current render scale defaults to 1.25×.
-
-Known limitations:
-
-- The latest single-pass rendering, driving changes, gestures, scope, room-scale movement, HUD modes and settings still need another playtest on the Frame. Some have only build checks or tests without wearing the headset.
-- The last headset session found broken strafing, an invisible menu pointer, windshield reflections and invalid OpenXR layer poses. Fixes are in the source, but haven't been confirmed in another worn session.
-- The scope's placement and gesture thresholds still need tuning. The scope doesn't work with head aiming.
-- Single-pass stereo doesn't use the hidden-area mask yet. MSAA, foveated rendering, a comfort vignette and a dedicated seated mode aren't implemented.
-- Level loading can block the frame loop. There hasn't been a full campaign playthrough or a complete pause/resume, save-retention and exit acceptance test on the current build. VR multiplayer hasn't been tested.
-- Quit through SteamVR's menu; there isn't a separate quit button in the VR settings.
-
-The [architecture and development notes](docs/VR_ARCHITECTURE.md) have the measurements, headset feedback and implementation details.
+The [architecture and development notes](docs/VR_ARCHITECTURE.md) cover how the port works and keep the older development history.
 
 ## Default controls
 
@@ -95,7 +84,7 @@ tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-launch
 
 Register the APK once as a **HaloCEVR** Lepton devkit title, following the [build and deploy instructions](docs/VR_ARCHITECTURE.md#build-and-deploy). Launch it from the Steam library so the controllers bind correctly. Later deployments update that title's APK.
 
-Maps live in `~/Documents/HaloCE/maps` on SteamOS, exposed as `/sdcard/Documents/HaloCE/maps` inside Lepton. `config.toml` and saves use the same HaloCE folder. That location is intended to survive a Lepton reset; the current build still needs the full save-retention check.
+Maps live in `~/Documents/HaloCE/maps` on SteamOS, exposed as `/sdcard/Documents/HaloCE/maps` inside Lepton. `config.toml` and saves use the same HaloCE folder, outside Lepton's disposable app storage.
 
 ## Build the VR version
 

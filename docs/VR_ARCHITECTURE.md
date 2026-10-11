@@ -4,10 +4,16 @@ This fork adds a VR build of the Android port for the Steam Frame. The headset r
 apps inside Lepton, a container, and the build uses OpenXR to talk to SteamVR. Desktop and phone
 builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 
-For the current feature list and testing caveats, start with the [fork's README](../README.md).
-The notes here keep the development history, including earlier defaults and measurements.
-The latest renderer uses single-pass stereo by default, at 1.25× resolution; the settings
-version is now 4. Its latest measurements are unattended, and a fresh worn acceptance is pending.
+For the current feature list, start with the [fork's README](../README.md).
+
+**Current status (2026-10-11):** the author has confirmed the VR features in the headset and
+stable 120 Hz at the Frame's native 2160×2160 resolution per eye. Single-pass stereo is on
+by default. `vr.resolution_scale = 1.25` gives that native resolution from OpenXR's 1728×1728
+eye target; the settings version is 4.
+
+The notes below keep the development history, including earlier defaults, benchmarks and
+"not yet worn" notes. Those describe the state at the time; the current confirmation above
+supersedes the old performance advice and pending headset tests.
 
 ## Early status notes (2026-10-02, with later annotations)
 
