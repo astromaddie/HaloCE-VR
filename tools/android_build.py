@@ -236,9 +236,9 @@ def _musl_sources() -> List[Path]:
     return sources
 
 
-def android_configure_inputs() -> List[Path]:
+def android_configure_inputs(public_apk: bool = False) -> List[Path]:
     return [Path(__file__), PORT_DIR / "guest" / "runtime", PORT_DIR / "host", LINUX_DIR / "src", SFVR_DIR / "src",
-            *hud_configure_inputs()]
+            *hud_configure_inputs(public_apk)]
 
 
 def generate_android_build(n: Writer, sln: Any) -> None:
@@ -250,6 +250,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         n.comment("Android build: no NDK found (set ANDROID_NDK_HOME or pass --android-ndk)")
         return
     vr = bool(getattr(sln, "android_vr", False))
+    public_apk = bool(getattr(sln, "android_public_apk", False))
     try:
         fetch_third_party(vr)
     except (subprocess.CalledProcessError, OSError) as error:
@@ -447,8 +448,10 @@ def generate_android_build(n: Writer, sln: Any) -> None:
         objects.append(guest_object(source, game_cflags))
 
     # the platform layer shared with Linux, and the guest runtime
+    public_cflags = ["-DHALO_PUBLIC_APK=1"] if public_apk else []
     platform_cflags = " ".join([
         guest_abi, guest_code, "-std=gnu11", "-D_GNU_SOURCE", "-DHALO_LINUX_PLATFORM_LAYER", "-w", profile_flags,
+        *public_cflags,
         f"-include {prefix_header}", f"-include {platform_semantics_header}",
         f"-I{LINUX_DIR}/src", f"-I{LINUX_DIR}/include", f"-I{PORT_DIR}/guest/runtime",
         f"-I{PORT_DIR}/include", f"-I{TOML_DIR}", f"-I{KCP_DIR}", f"-I{SFVR_DIR}/include", "-Isource -Isource/cseries",
@@ -460,7 +463,7 @@ def generate_android_build(n: Writer, sln: Any) -> None:
             continue
         objects.append(guest_object(source, platform_cflags))
     # the high-res HUD's textures (port/assets/hud; port/linux/src/hud_hires.c)
-    for source in hud_assets_build(n, "android", gen_dir / "hud_hires_assets.c"):
+    for source in hud_assets_build(n, "android", gen_dir / "hud_hires_assets.c", public_apk=public_apk):
         objects.append(guest_object(source, platform_cflags))
     # the settings file's parser (port/third_party/tomlc17)
     objects.append(guest_object(TOML_DIR / "tomlc17.c", platform_cflags))

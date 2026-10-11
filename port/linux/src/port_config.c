@@ -77,6 +77,12 @@ struct config_setting
 	const char *comment;
 };
 
+#ifdef HALO_PUBLIC_APK
+#define HIGH_RES_ASSET_DEFAULT "false"
+#else
+#define HIGH_RES_ASSET_DEFAULT "true"
+#endif
+
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -96,11 +102,11 @@ static const struct config_setting config_settings[] =
 		"In first person, point the view where the player aims now instead of\n"
 		"where the last tick left it: the view turns the frame the mouse moves,\n"
 		"not up to two ticks (66 ms) later." },
-	{ "display.high_res_hud", _config_boolean, "true", "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
+	{ "display.high_res_hud", _config_boolean, HIGH_RES_ASSET_DEFAULT, "HALO_HIGH_RES_HUD", _environment_value, _platform_all,
 		"Draw the HUD (meters, counters, panels, motion sensor, reticles,\n"
 		"waypoints, scopes) from the high-res assets (8x the maps' bitmaps);\n"
 		"false draws the maps' own bitmaps." },
-	{ "display.high_res_text", _config_boolean, "true", "HALO_HIGH_RES_TEXT", _environment_value, _platform_all,
+	{ "display.high_res_text", _config_boolean, HIGH_RES_ASSET_DEFAULT, "HALO_HIGH_RES_TEXT", _environment_value, _platform_all,
 		"Draw the menus' and HUD's text with the fonts in port/assets/fonts\n"
 		"(Overpass) at the display's resolution, and the menus' titles from\n"
 		"port/assets/titles; false draws the maps' bitmap fonts and titles." },

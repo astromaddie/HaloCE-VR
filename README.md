@@ -89,6 +89,8 @@ ninja android_apk
 
 The VR APK is `port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk`, package `com.halo.decomp.vr`. `configure.py` chooses the newest NDK under `ANDROID_HOME` unless you pass `--android-ndk`; pass `--android-guest-cc /path/to/clang` if the `arm64_32` compiler isn't found automatically. `--vr` selects the Frame/OpenXR build; the flat Android target is a different APK. The repository contains source, not a prebuilt VR APK. The exact checked revision and prior full-build result are recorded in [PR0 readiness](docs/PR0_READINESS.md) and [its metadata](docs/PR0_METADATA.json).
 
+For a public Steam Frame APK, add `--public-apk` to the configure command above. It omits the game-derived high-resolution HUD and menu-title images, keeps the SIL Open Font License fonts, and defaults to the HUD, bitmap fonts and titles in the player's own maps. The normal `--vr` build retains the full high-resolution assets for personal builds.
+
 ## Game data, install and play
 
 You need the `maps/` folder from your own Xbox Halo: Combat Evolved disc image (`.iso` or `.xiso`). PC Halo and MCC data aren't inputs for this port. Extract the maps on the build computer. In WSL2, a Windows file such as `C:\Users\you\Backups\Halo.iso` is reachable at `/mnt/c/Users/you/Backups/Halo.iso`; copy it into the Linux filesystem first if you prefer:

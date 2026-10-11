@@ -78,7 +78,14 @@ parser.add_argument(
     action="store_true",
     help="Android: the VR headset build (OpenXR; HALO_VR), packaged as com.halo.decomp.vr",
 )
+parser.add_argument(
+    "--public-apk",
+    action="store_true",
+    help="Android --vr: omit game-derived HUD/title images and use the player's map bitmaps",
+)
 args = parser.parse_args()
+if args.public_apk and not args.vr:
+    parser.error("--public-apk requires --vr")
 
 # the settings the builds read
 sln = SimpleNamespace(
@@ -93,6 +100,7 @@ sln = SimpleNamespace(
     android_ndk=args.android_ndk,
     android_guest_cc=args.android_guest_cc,
     android_vr=args.vr,
+    android_public_apk=args.public_apk,
 )
 
 
@@ -133,7 +141,7 @@ n.build(
         configure_script,
         Path("tools/ninja_syntax.py"),
         *linux_configure_inputs(),
-        *android_configure_inputs(),
+        *android_configure_inputs(args.public_apk),
         *windows_configure_inputs(),
     ],
 )
