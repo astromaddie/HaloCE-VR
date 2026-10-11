@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "milestone": "PR0",
+  "status": "EXPERIMENTAL",
+  "publication_status": "already public; no new binary release",
+  "tested_commit": "e642cad49bbca96e6a2b9c127a2da83a30a3c111",
+  "supported_targets": [
+    "Steam Frame Lepton / Android ARM64 / SteamVR OpenXR"
+  ],
+  "validation": {
+    "repo": "HaloCE-VR",
+    "tested_commit": "e642cad49bbca96e6a2b9c127a2da83a30a3c111",
+    "build": "PASS python3 configure.py --vr --lto=off --pgo=off; ninja -j4 android_apk",
+    "isolation": "Public dependency downloads; isolated shell/Java/Gradle homes; new debug key; no Git credentials, maps or signing secrets",
+    "apk_sha256": "bbeb6bd09e3951949178d918738bfcd13d0c966ffb0027495bebfa14d128d3d4",
+    "apk_bytes": 27287716,
+    "signature": "PASS",
+    "16KiB_zip_alignment": "PASS",
+    "game_data": "No maps/ROM/save files; built-in HUD/title texture sheets are a separate rights finding"
+  },
+  "distribution_blockers": [
+    "Tracked port/assets/hud and port/assets/titles contain game-derived texture sheets; the CC0 source notice does not establish their redistribution permission"
+  ],
+  "license_scope": "Upstream source and component notices remain intact; commercial Halo game data and texture sheets are outside the permission granted by original VR code",
+  "changelog": "CHANGELOG.md"
+}
