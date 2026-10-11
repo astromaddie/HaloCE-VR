@@ -1,140 +1,121 @@
-# Halo: Combat Evolved for Linux, Windows and Android
+# Halo: Combat Evolved VR for Steam Frame
 
-[![Join our Discord](https://invidget.switchblade.xyz/9gqcHyr5km)](https://discord.gg/9gqcHyr5km)
+This is my Steam Frame VR fork of [OpenCE](https://github.com/OpenCommunityEdition/OpenCE), previously called Halo CE Universal. It runs Halo on the headset itself, using the Android port through Lepton and OpenXR through SteamVR. No gaming PC needed to play.
 
-This project is a port of the Halo: Combat Evolved decompilation to Linux,
-Windows and Android. The decompilation is of the Xbox build 2342
-(`cachebeta.exe`, SHA-256
-`4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
+**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. I've played it on my Frame, but several of the newer features and fixes still need another headset test. You need your own Xbox Halo game data; this repo doesn't supply it.
 
-<img width="1289" height="995" alt="The game on Linux" src="https://github.com/user-attachments/assets/0d3ad50f-f8b8-46cf-aef8-e3661da2a7d7" />
+The VR target is **Steam Frame, ARM64 Android in Lepton**. Upstream's flat Linux, Windows and Android ports are still here. Other VR headsets aren't tested.
 
-The port starts from the decompilation of [bnunu/halo-1](https://github.com/bnunu/halo-1).
-That project is a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo).
+## What this fork adds
 
-## Download
+### Weapons and hands
 
-GitHub Actions builds the game for each commit. These links download the
-builds of the latest release:
+- Full stereo rendering, head tracking and tracked controller aiming. You can aim with your hand or your head, and choose either hand for the gun.
+- Two-handed weapon aiming and stabilization, adjustable gun offsets, and extra aim smoothing when zoomed.
+- Arms that follow your hands using inverse kinematics, with animated or hidden arms as alternatives. Optional legs or a torso, plus a seated body with hands on the vehicle controls.
+- Swing-to-melee, physical crouching, weapon holsters, swapping the gun between hands, and a flashlight gesture near your head. The normal button controls are still available.
+- Weapon and interaction haptics.
+- A picture-in-picture scope held at the gun, so zooming doesn't magnify your entire view. This currently needs hand aiming; the head-aim scope is unfinished.
 
-| Platform | Release | Debug |
-| --- | --- | --- |
-| Linux | [halo-linux-release.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-linux-release.zip) | [halo-linux-debug.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-linux-debug.zip) |
-| Windows | [halo-windows-release.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-windows-release.zip) | [halo-windows-debug.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-windows-debug.zip) |
-| Android | [halo-android-release.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-android-release.zip) | [halo-android-debug.zip](https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-android-debug.zip) |
+### Movement and vehicles
 
-Use the release build to play. The debug build stops at the first failed
-assertion and writes it to the log. Use the debug build to find and report
-problems.
+- A VR controller layout, or the original Xbox-style layout if you prefer it. The Frame controllers have their own OpenXR bindings, with Touch and Index fallbacks in the code.
+- Snap, smooth or no stick turning; movement relative to your head or either controller; and a hold-to-recentre button.
+- Optional room-scale walking with collision checks. It's off by default and disabled during vehicles, cutscenes, scripted movement, death and network play.
+- First-person vehicle seats, a chase-camera option, a level horizon, and smoother transitions into and out of seats.
+- Warthog and Ghost driving on the left stick: sideways steers, forward is gas, back is reverse. An optional Warthog steering-wheel mode uses both grips on the wheel and the triggers as pedals.
+- Banshee flying in the direction your weapon hand points. The Scorpion keeps its normal driving controls and head-aimed cannon. Stick, head and hand steering options are also available.
 
-The game updates itself. At start-up it looks for a newer release, and asks
-if you want to install it. Refer to "Updates" in
-[port/linux/README.md](port/linux/README.md#updates).
+### HUD, menus and cutscenes
 
-Each build of the `main` branch that passes on all three platforms is a new
-release. The [Releases](https://github.com/cybersecurity/halo-ce-universal/releases)
-page keeps the last five releases. If the latest build has a problem, get
-an older build from that page.
+- A separate VR HUD with far, near and leash modes, adjustable placement and size, plus an aiming reticle.
+- Stereo pause menus on a panel in front of you, with a controller laser and pointer dot.
+- Two pages of VR settings in the pause menu. Changes save immediately, and older VR configs are migrated.
+- Stereo 3D cutscenes on a cinema screen, with a flat-screen option and fades across both eyes.
 
-## Game data
+### Rendering and storage
 
-The port does not include the game data. Download an Xbox disc image
-(`.xiso` or `.iso`) of Halo: Combat Evolved. All versions of the game
-operate. The maps of the European (PAL) version were made for a slower
-console. The port changes them to play as the North American (NTSC) maps do,
-so players of the two versions can play together.
+- A new single-pass stereo renderer draws the world for both eyes together. It's on by default; `vr.multiview = false` restores the two-pass renderer.
+- Eyes rendered at their actual target resolution, anisotropic texture filtering, and reduced windshield reflections.
+- Fixes for lens-flare stalls, buffer uploads and repeated compositor work, plus frame-time logging for checking performance on the Frame.
+- Game data, settings and saves in `Documents/HaloCE`, outside Lepton's disposable app storage.
 
-1. Start the game.
-2. At the first start, the game asks for the disc image. Select it.
-3. The game extracts the `maps/` folder. Then the game starts.
+## What's been tested, and what hasn't
 
-On Linux and Windows, the game puts `maps/` next to the executable. On
-Android, copy the disc image to the phone first. The app puts `maps/` in its
-data folder. Refer to [port/android/README.md](port/android/README.md).
+Earlier builds have been installed and played on a real Frame: menus, head tracking, stereo campaign gameplay, controller gunplay, vehicles and the 3D cinema screen. That doesn't mean every feature above has passed a headset test in the current build.
 
-## Platforms
+The latest development notes describe [8d73d4f6](https://github.com/astromaddie/HaloCE-VR/commit/8d73d4f670767bfb031303dbb9f0df23c6c97be1), from 5 October 2026. The new single-pass renderer was built and measured without wearing the headset. In Silent Cartographer, at 1.25× resolution and a 90 Hz runtime, it measured **67–89 fps**, versus **55–85 fps** with two passes. That still needs a proper playtest before I can say how it feels. Earlier headset tests held 72 Hz at 1.5× resolution; one indoor level held 90 Hz, while an open-level run fell to about 46 fps on an older build.
 
-Each platform has its own instructions:
+For now, start with **72 Hz in SteamVR's per-app display settings**. Stable 90 or 120 Hz across the campaign isn't there yet. The current render scale defaults to 1.25×.
 
-| Platform | Instructions |
+Known limitations:
+
+- The latest single-pass rendering, driving changes, gestures, scope, room-scale movement, HUD modes and settings still need another playtest on the Frame. Some have only build checks or tests without wearing the headset.
+- The last headset session found broken strafing, an invisible menu pointer, windshield reflections and invalid OpenXR layer poses. Fixes are in the source, but haven't been confirmed in another worn session.
+- The scope's placement and gesture thresholds still need tuning. The scope doesn't work with head aiming.
+- Single-pass stereo doesn't use the hidden-area mask yet. MSAA, foveated rendering, a comfort vignette and a dedicated seated mode aren't implemented.
+- Level loading can block the frame loop. There hasn't been a full campaign playthrough or a complete pause/resume, save-retention and exit acceptance test on the current build. VR multiplayer hasn't been tested.
+- Quit through SteamVR's menu; there isn't a separate quit button in the VR settings.
+
+The [architecture and development notes](docs/VR_ARCHITECTURE.md) have the measurements, headset feedback and implementation details.
+
+## Default controls
+
+These are the default VR controls. Left-handed mode swaps the weapon-hand trigger and bumper roles.
+
+| Input | Action |
 | --- | --- |
-| Linux (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/linux/README.md](port/linux/README.md) |
-| Windows (32-bit x86 executable, OpenGL 4.5, SDL3) | [port/windows/README.md](port/windows/README.md) |
-| Android (arm64 app, OpenGL ES 3, SDL3) | [port/android/README.md](port/android/README.md) |
+| Weapon-hand trigger / off-hand trigger | Fire / zoom |
+| Weapon-hand bumper / off-hand bumper | Grenade / flashlight |
+| Left stick / click | Move / crouch |
+| Right stick / click | Turn / melee |
+| Right A / B | Jump / action and reload |
+| Right X / Y | Switch grenades / switch weapons |
+| Menu | Pause, including VR settings |
+| View, short press | Back |
+| View, held 1 second | Recentre position and heading |
+| View, held 3 seconds | Recentre and reset standing height |
 
-The Linux README also gives the controls, the settings and the multiplayer
-functions. These are almost the same on all platforms.
+## Game data and installation
 
-## Multiplayer
+You need the `maps/` folder from your own Xbox Halo: Combat Evolved disc image (`.iso` or `.xiso`). PC Halo and MCC data aren't the input for this port.
 
-The game can play system link games on a local network and on the internet:
+Extract the maps on your computer:
 
-- A system link game can have up to 128 players on up to 128 machines.
-- Linux, Windows and Android machines can play in the same game.
-- An invite link lets a machine join a game on the internet. No server of
-  this project is necessary.
-- The netcode is new. Each machine moves its own player at once,
-  and the host makes the decisions for the game. Refer to
-  [port/linux/NETCODE.md](port/linux/NETCODE.md).
+```bash
+python3 tools/steam_frame/extract_maps.py /path/to/Halo.iso /path/to/extracted-halo
+```
 
-## Build the game
+After building the APK below, connect the Frame over USB and start **Lepton Development** from its Steam library. The deploy helper needs `adb`, SSH access and `rsync`. Set your own Frame address rather than using the helper's development default:
 
-You do not need the Xbox SDK. The port supplies the SDK declarations that
-the game uses. Refer to [port/include/xdk](port/include/xdk/README.md).
+```bash
+export FRAME_HOST="steamos@YOUR_FRAME_ADDRESS"
+tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-launch
+```
 
-To build the game:
+Register the APK once as a **HaloCEVR** Lepton devkit title, following the [build and deploy instructions](docs/VR_ARCHITECTURE.md#build-and-deploy). Launch it from the Steam library so the controllers bind correctly. Later deployments update that title's APK.
 
-1. Install Python and [ninja](https://ninja-build.org/).
-2. Install the tools for your platform. Refer to the README for the
-   platform.
-3. In the root folder of the repository, enter `python configure.py`.
-4. Enter `ninja` with the target for the platform:
+Maps live in `~/Documents/HaloCE/maps` on SteamOS, exposed as `/sdcard/Documents/HaloCE/maps` inside Lepton. `config.toml` and saves use the same HaloCE folder. That location is intended to survive a Lepton reset; the current build still needs the full save-retention check.
 
-| Target | Result |
-| --- | --- |
-| `ninja linux` | `build/linux/halo` |
-| `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` |
-| `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` |
+## Build the VR version
 
-If you enter `ninja` without a target, ninja builds the game for the
-computer that you use.
+You'll need Python 3, ninja, CMake, an Android SDK and NDK, a JDK 17 or later, and a clang with the `arm64_32` target. See the [Android toolchain requirements](port/android/README.md#requirements). You don't need the Xbox SDK or game data to compile.
 
-`tools/ci_build.py` makes the same builds as GitHub Actions. For example,
-enter `python tools/ci_build.py linux release`.
+```bash
+git clone https://github.com/astromaddie/HaloCE-VR.git
+cd HaloCE-VR
+export ANDROID_HOME="/path/to/android-sdk"
+export JAVA_HOME="/path/to/jdk-17"
+python3 configure.py --vr --lto=off --pgo=off
+ninja android_apk
+```
 
-### Build options
+The APK is `port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk`, with package name `com.halo.decomp.vr`. The first build downloads its public dependencies. If the tools aren't found automatically, use `--android-ndk /path/to/ndk` and `--android-guest-cc /path/to/clang`.
 
-Give these options to `configure.py`:
+`--vr` matters: without it, you build the flat Android app. The inherited CI also builds the flat ports, so its artifacts aren't VR APKs. Automatic flat-build releases and Discord notifications are opt-in in this fork. This update publishes source, with no new prebuilt VR release.
 
-| Option | Result |
-| --- | --- |
-| (none) | A debug build. A failed assertion stops the game. |
-| `--release` | A release build. The game does not examine assertions, as in the retail game. |
-| `--portable` | The Linux and Windows builds operate on all x86-64 processors. Use this option for builds that you give to other persons. |
-| `--lto=thin`, `--lto=off` | Less link-time optimization. The link is faster. |
-| `--pgo=off` | No profile-guided optimization. |
-| `--pgo=train` | Records a new optimization profile. Refer to "Optimization profiles". |
+## Credits and licenses
 
-Without `--portable`, the Linux and Windows builds use all the instructions
-of the processor that builds them (`-march=native`). Such a build does not
-always start on a different computer.
+The game port comes from [OpenCE](https://github.com/OpenCommunityEdition/OpenCE), based on [bnunu/halo-1](https://github.com/bnunu/halo-1) and [punpckhdq/halo](https://github.com/punpckhdq/halo). The VR controls, gestures, smoothing, haptics and scope follow designs from LivingFray's PC mod, [HaloCEVR](https://github.com/LivingFray/HaloCEVR), reimplemented here for the decompiled game. The shared VR helpers come from [sfvr](https://github.com/astromaddie/sfvr).
 
-### Optimization profiles
-
-The builds use profiles of the game to optimize the code:
-
-- `pgo/halo_linux.profdata` for Linux and Android.
-- `pgo/halo_windows.profdata` for Windows.
-
-The profiles need clang 22 or later. With an older clang, the builds do not
-use the profiles.
-
-To record a new profile:
-
-1. Delete the profile.
-2. Enter `python configure.py --pgo=train`.
-3. Enter `ninja linux` or `ninja windows`.
-
-The build then plays the main menu and the first minute of each campaign
-level. This procedure continues for approximately 15 minutes. The game
-data must be in `assets/`.
+The original [upstream README](UPSTREAM_README.md) and [CC0 notice](LICENSE.md) are kept, along with third-party notices. The bundled sfvr code has its own [MIT license](port/third_party/sfvr/LICENSE). These source notices don't grant permission to redistribute Halo's commercial game data, textures or audio. Bring your own game data.

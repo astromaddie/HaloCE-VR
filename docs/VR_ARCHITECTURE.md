@@ -4,7 +4,12 @@ This fork adds a VR build of the Android port for the Steam Frame. The headset r
 apps inside Lepton, a container, and the build uses OpenXR to talk to SteamVR. Desktop and phone
 builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 
-## Status (2026-10-02)
+For the current feature list and testing caveats, start with the [fork's README](../README.md).
+The notes here keep the development history, including earlier defaults and measurements.
+The latest renderer uses single-pass stereo by default, at 1.25× resolution; the settings
+version is now 4. Its latest measurements are unattended, and a fresh worn acceptance is pending.
+
+## Early status notes (2026-10-02, with later annotations)
 
 | Area | State |
 | --- | --- |
@@ -56,11 +61,13 @@ builds are unchanged: everything here is behind `configure.py --vr` (`HALO_VR`).
 ## Build and deploy
 
 ```bash
-export ANDROID_HOME=$HOME/Library/Android/sdk JAVA_HOME=/opt/homebrew/opt/openjdk@17
+export ANDROID_HOME="/path/to/android-sdk"
+export JAVA_HOME="/path/to/jdk-17"
+export FRAME_HOST="steamos@YOUR_FRAME_ADDRESS"
 python3 configure.py --lto=off --pgo=off --vr
 ninja android_apk          # port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk
-tools/steam_frame/extract_maps.py "Halo.iso" /tmp/halo   # once: maps out of your disc image
-tools/steam_frame/deploy.sh --maps /tmp/halo/maps        # copy, install, start
+python3 tools/steam_frame/extract_maps.py "Halo.iso" /path/to/extracted-halo
+tools/steam_frame/deploy.sh --maps /path/to/extracted-halo/maps --no-launch
 ```
 
 **To play** on the headset alone, launch **HaloCEVR** from the Steam library. It is a Lepton
@@ -68,7 +75,9 @@ devkit title running `~/devkit-game/HaloCEVR/HaloCE-VR.apk`, and `deploy.sh` ref
 copy. To register it on another headset, copy the APK there, then run:
 
 ```bash
-ssh steamos@10.86.200.233 'cd ~/devkit-utils && python3 steam-client-create-shortcut --parms "{\"gameid\": \"HaloCEVR\", \"directory\": \"/home/steamos/devkit-game/HaloCEVR\", \"force_appid\": \"\", \"argv\": [\"HaloCE-VR.apk\"], \"env\": {}, \"settings\": {\"steam_play\": \"1\", \"compat_tool\": \"lepton\"}, \"lepton_args\": \"\"}"'
+ssh "$FRAME_HOST" 'mkdir -p ~/devkit-game/HaloCEVR'
+scp port/android/app/build/outputs/apk/vr/debug/app-vr-debug.apk "$FRAME_HOST:devkit-game/HaloCEVR/HaloCE-VR.apk"
+ssh "$FRAME_HOST" 'cd ~/devkit-utils && python3 steam-client-create-shortcut --parms "{\"gameid\": \"HaloCEVR\", \"directory\": \"/home/steamos/devkit-game/HaloCEVR\", \"force_appid\": \"\", \"argv\": [\"HaloCE-VR.apk\"], \"env\": {}, \"settings\": {\"steam_play\": \"1\", \"compat_tool\": \"lepton\"}, \"lepton_args\": \"\"}"'
 ```
 
 **The refresh rate** follows the Steam Frame's display setting: SteamVR offers the app only

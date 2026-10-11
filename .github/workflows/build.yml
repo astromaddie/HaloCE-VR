@@ -15,7 +15,8 @@ name: Build
 # - Windows, whose minutes cost twice Linux's, builds only Windows;
 # - artifacts are kept for three days.
 #
-# A successful build of main is also published as a GitHub release, the
+# If PUBLISH_FLAT_BUILDS is explicitly enabled, a successful main build is
+# published as a GitHub release of the flat ports (not the VR APK), the
 # newest marked latest, so that
 # https://github.com/<repository>/releases/latest/download/<file> always
 # gives the latest build; the last five are kept.
@@ -221,7 +222,7 @@ jobs:
     # latest/download links); then all but the newest five build-* releases
     # go, tags and all. Only for main, and only when every platform built.
     needs: [linux, android, windows]
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && vars.PUBLISH_FLAT_BUILDS == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -274,11 +275,12 @@ jobs:
 
   notify:
     # A Discord embed for the run, to the DISCORD_WEBHOOK secret (nothing
-    # without it): green when every platform built, red when one did not,
+    # without it), only if SEND_BUILD_NOTIFICATIONS is explicitly enabled:
+    # green when every platform built, red when one did not,
     # with each platform's result, this run's release (main only), and links
     # to the latest release's builds.
     needs: [linux, android, windows, release]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && vars.SEND_BUILD_NOTIFICATIONS == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
