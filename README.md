@@ -4,6 +4,8 @@ This is my Steam Frame VR fork of [OpenCE](https://github.com/OpenCommunityEditi
 
 **EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You need your own Xbox Halo game data; this repo doesn't supply it.
 
+**Want to play on Steam Frame?** Download the prebuilt standalone VR APK from the [v0.1.0 prerelease](https://github.com/astromaddie/HaloCE-VR/releases/tag/v0.1.0); no compiler is needed. You still need Halo: Combat Evolved game data from your own copy.
+
 The VR target is **Steam Frame, ARM64 Android in Lepton**. Upstream's flat Linux, Windows and Android ports are still here. Other VR headsets aren't tested.
 
 ## What this fork adds
